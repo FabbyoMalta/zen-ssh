@@ -1,0 +1,9 @@
+Package: zen-connect
+Version: 1.0
+Section: utils
+Priority: optional
+Architecture: all
+Depends: openssh-client
+Maintainer: Seu Nome <seuemail@example.com>
+Description: Gerenciador de Conexões SSH
+ Um script que organiza hosts SSH em grupos para fácil gerenciamento.

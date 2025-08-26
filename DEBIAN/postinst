@@ -1,0 +1,34 @@
+#!/bin/bash
+# Script de pós-instalação do zen-connect
+
+# Criação do diretório para grupos (se não existir)
+if [ ! -d /etc/ssh/groups ]; then
+    mkdir -p /etc/ssh/groups
+    chmod 755 /etc/ssh/groups
+fi
+
+# Mensagem de boas-vindas
+echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~ ███████╗███████╗███╗   ██╗     ██████╗ ██████╗ ███╗   ██╗███╗   ██╗███████╗ ██████╗████████╗ ~
+~ ╚══███╔╝██╔════╝████╗  ██║    ██╔════╝██╔═══██╗████╗  ██║████╗  ██║██╔════╝██╔════╝╚══██╔══╝ ~
+~   ███╔╝ █████╗  ██╔██╗ ██║    ██║     ██║   ██║██╔██╗ ██║██╔██╗ ██║█████╗  ██║        ██║    ~
+~  ███╔╝  ██╔══╝  ██║╚██╗██║    ██║     ██║   ██║██║╚██╗██║██║╚██╗██║██╔══╝  ██║        ██║    ~
+~ ███████╗███████╗██║ ╚████║    ╚██████╗╚██████╔╝██║ ╚████║██║ ╚████║███████╗╚██████╗   ██║    ~
+~ ╚══════╝╚══════╝╚═╝  ╚═══╝     ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═══╝╚══════╝ ╚═════╝   ╚═╝    ~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+echo "====================================="
+echo " Bem-vindo ao Zen Connect!"
+echo "====================================="
+echo "Instalação concluída com sucesso!"
+echo -e "Zen Connect é gerenciador SSH leve e simples que usaas soluções 
+do próprio ambiente Linux, como ssh-conf baseado em grupos
+e hosts, para gerenciar servidores, equipamentos e qualquer conexão SSH 
+que possa ser estabelecida"
+echo
+echo "Exemplo de uso:"
+echo "  - Para adicionar um host: zen-connect add-host"
+echo "  - Para listar os grupos disponíveis: zen-connect list-groups"
+echo "  - Para criar um novo grupo: zen-connect create-group"
+echo
+echo "Obrigado por usar o Zen Connect!"
+echo

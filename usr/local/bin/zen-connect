@@ -1,0 +1,142 @@
+#!/bin/bash
+
+GROUPS_DIR="/etc/ssh/groups"
+HOSTS_FILE="/etc/hosts"
+SSH_CONFIG_FILE="/etc/ssh/ssh_config"
+
+# Verifica se o script está sendo executado como root
+if [[ $EUID -ne 0 ]]; then
+    echo "Este script deve ser executado como root!"
+    exit 1
+fi
+
+# Cria o diretório para grupos, se não existir
+mkdir -p "$GROUPS_DIR"
+
+# Função para exibir ajuda
+show_help() {
+    echo "Uso: zen-connect <comando> [argumentos]"
+    echo
+    echo "Comandos disponíveis:"
+    echo "  list-groups                  Lista os grupos disponíveis."
+    echo "  list-hosts <grupo>           Lista os hosts em um grupo específico."
+    echo "  create-group                 Cria um novo grupo."
+    echo "  add-host                     Adiciona um novo host a um grupo."
+    echo "  -h, --help                   Mostra esta mensagem de ajuda."
+    echo
+    exit 0
+}
+
+# Função para listar grupos
+list_groups() {
+    echo "############"
+    echo " GRUPOS DISPONÍVEIS "
+    echo "############"
+    ls "$GROUPS_DIR" 2>/dev/null || echo "Nenhum grupo encontrado."
+}
+
+# Função para listar hosts em um grupo
+list_hosts_in_group() {
+    if [[ -z "$1" ]]; then
+        echo "Erro: Nome do grupo é necessário para listar hosts."
+        exit 1
+    fi
+    group_file="$GROUPS_DIR/$1.conf"
+
+    if [[ -f "$group_file" ]]; then
+        echo "############"
+        echo " HOSTS NO GRUPO '$1' "
+        echo "############"
+        cat "$group_file"
+    else
+        echo "Grupo '$1' não encontrado!"
+    fi
+}
+
+# Função para criar um grupo
+create_group() {
+    read -p "Digite o nome do novo grupo: " group_name
+    if [[ -z "$group_name" ]]; then
+        echo "O nome do grupo não pode estar vazio!"
+        return
+    fi
+
+    group_file="$GROUPS_DIR/$group_name.conf"
+    if [[ -f "$group_file" ]]; then
+        echo "O grupo '$group_name' já existe!"
+    else
+        touch "$group_file"
+        echo "Grupo '$group_name' criado com sucesso!"
+    fi
+}
+
+# Função para adicionar um host
+add_host() {
+    read -p "Escolha o grupo para adicionar o host: " group_name
+    group_file="$GROUPS_DIR/$group_name.conf"
+
+    if [[ ! -f "$group_file" ]]; then
+        echo "Grupo '$group_name' não existe! Use a opção 'create-group' para criá-lo."
+        return
+    fi
+
+    read -p "IP: " ip
+    [[ -z "$ip" ]] && { echo "IP não pode estar vazio!"; return; }
+
+    read -p "Nome: " nome
+    [[ -z "$nome" ]] && { echo "Nome não pode estar vazio!"; return; }
+
+    read -p "Usuário (User): " user
+    [[ -z "$user" ]] && { echo "Usuário não pode estar vazio!"; return; }
+
+    read -p "Porta (Port): " porta
+    [[ -z "$porta" ]] && { echo "Porta não pode estar vazia!"; return; }
+
+    # Adiciona o host ao /etc/hosts
+    if ! grep -q "# Grupo: $group_name" "$HOSTS_FILE"; then
+        echo -e "\n# Grupo: $group_name" >> "$HOSTS_FILE"
+    fi
+    echo -e "$ip\t$nome" >> "$HOSTS_FILE"
+    echo "Host adicionado ao grupo '$group_name' no $HOSTS_FILE!"
+
+    # Adiciona ao arquivo do grupo
+    {
+        echo -e "\nHost $nome"
+        echo "    User $user"
+        echo "    Port $porta"
+        echo "    Group $group_name"
+    } >> "$group_file"
+    echo "Host adicionado ao grupo '$group_name'!"
+}
+
+# Verifica os argumentos passados
+case $1 in
+    list-groups)
+        list_groups
+        exit 0
+        ;;
+    list-hosts)
+        if [[ -z "$2" ]]; then
+            echo "Erro: Nome do grupo é necessário. Exemplo: zen-connect list-hosts <grupo>"
+            exit 1
+        fi
+        list_hosts_in_group "$2"
+        exit 0
+        ;;
+    create-group)
+        create_group
+        exit 0
+        ;;
+    add-host)
+        add_host
+        exit 0
+        ;;
+    -h|--help)
+        show_help
+        ;;
+    *)
+        echo "Comando inválido! Use 'zen-connect -h' para ajuda."
+        exit 1
+        ;;
+esac
+
