@@ -8,6 +8,7 @@ ZenSSH e uma TUI para Linux que gerencia aliases SSH com base no proprio OpenSSH
 - persistencia local em `~/.config/zenssh/hosts.json`
 - geracao de um arquivo gerenciado em `~/.config/zenssh/ssh_config`
 - injecao automatica de `Include ~/.config/zenssh/ssh_config` em `~/.ssh/config`
+- importacao explicita de aliases existentes do `~/.ssh/config`
 - conexao SSH por alias
 - camada de diagnostico SSH com retry automatico para servidores legados (`ssh-rsa`, KEX antigos)
 - geracao de chave `ed25519`
@@ -79,6 +80,7 @@ Para este projeto, isso costuma ser suficiente no primeiro deploy porque o binar
 ## Controles
 
 - `a`: adicionar host
+- `i`: importar aliases do `~/.ssh/config`
 - `e`: editar host selecionado
 - `d`: remover host selecionado
 - `g`: gerar chave SSH
