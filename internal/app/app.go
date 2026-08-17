@@ -1,12 +1,9 @@
 package app
 
 import (
-	"fmt"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	"zenssh/internal/config"
-	"zenssh/internal/sshcfg"
 	"zenssh/internal/ui"
 )
 
@@ -18,10 +15,6 @@ func Run() error {
 	if err := store.Ensure(); err != nil {
 		return err
 	}
-	if err := sshcfg.EnsureMainConfigIncludes(store.ManagedSSHConfigPath()); err != nil {
-		return fmt.Errorf("ensure ssh config include: %w", err)
-	}
-
 	model, err := ui.NewModel(store)
 	if err != nil {
 		return err
