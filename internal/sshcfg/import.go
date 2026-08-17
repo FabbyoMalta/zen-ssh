@@ -15,7 +15,74 @@ import (
 
 type ImportResult struct {
 	Imported int
+	Updated  int
+	Removed  int
 	Skipped  int
+}
+
+func ImportCandidates(store *config.Store, candidates []Candidate) (ImportResult, error) {
+	existing, err := store.LoadHosts()
+	if err != nil {
+		return ImportResult{}, err
+	}
+	byAlias := make(map[string]int, len(existing))
+	for i, host := range existing {
+		byAlias[strings.ToLower(host.Alias)] = i
+	}
+	now := time.Now()
+	result := ImportResult{}
+	for _, candidate := range candidates {
+		if !candidate.Selected {
+			continue
+		}
+		key := strings.ToLower(candidate.Host.Alias)
+		index, exists := byAlias[key]
+		if candidate.Remove {
+			if exists {
+				existing = append(existing[:index], existing[index+1:]...)
+				result.Removed++
+				byAlias = make(map[string]int, len(existing))
+				for i, host := range existing {
+					byAlias[strings.ToLower(host.Alias)] = i
+				}
+			}
+			continue
+		}
+		host := candidate.Host
+		if err := config.ValidateHost(host); err != nil {
+			return ImportResult{}, fmt.Errorf("candidato %q: %w", host.Alias, err)
+		}
+		if exists {
+			if candidate.Status == "sem mudancas" || candidate.Status == "editado localmente" {
+				result.Skipped++
+				continue
+			}
+			host.CreatedAt = existing[index].CreatedAt
+			host.UpdatedAt = now
+			host.KeySent = existing[index].KeySent
+			if config.HostFingerprint(existing[index]) == config.HostFingerprint(host) {
+				host.KeyAuthStatus = existing[index].KeyAuthStatus
+				host.KeyAuthCheckedAt = existing[index].KeyAuthCheckedAt
+				host.KeyAuthError = existing[index].KeyAuthError
+			} else {
+				host.KeyAuthStatus = config.KeyAuthUnknown
+			}
+			host.Group = existing[index].Group
+			host.ImportedFingerprint = config.HostFingerprint(host)
+			existing[index] = host
+			result.Updated++
+			continue
+		}
+		host.CreatedAt, host.UpdatedAt = now, now
+		host.ImportedFingerprint = config.HostFingerprint(host)
+		existing = append(existing, host)
+		byAlias[key] = len(existing) - 1
+		result.Imported++
+	}
+	if err := SaveAll(store, existing); err != nil {
+		return ImportResult{}, err
+	}
+	return result, nil
 }
 
 type importBlock struct {
@@ -29,52 +96,16 @@ type importBlock struct {
 }
 
 func ImportHosts(store *config.Store) (ImportResult, error) {
-	home, err := os.UserHomeDir()
+	discovery, err := Discover(store.ManagedSSHConfigPath())
 	if err != nil {
 		return ImportResult{}, err
 	}
-
-	mainConfig := filepath.Join(home, ".ssh", "config")
-	imported, err := ParseOpenSSHConfigs(mainConfig, store.ManagedSSHConfigPath())
-	if err != nil {
-		return ImportResult{}, err
-	}
-
 	existing, err := store.LoadHosts()
 	if err != nil {
 		return ImportResult{}, err
 	}
-
-	now := time.Now()
-	byAlias := make(map[string]config.Host, len(existing))
-	for _, host := range existing {
-		byAlias[host.Alias] = host
-	}
-
-	result := ImportResult{}
-	for _, host := range imported {
-		_, exists := byAlias[host.Alias]
-		if exists {
-			result.Skipped++
-			continue
-		}
-		host.CreatedAt = now
-		host.UpdatedAt = now
-		byAlias[host.Alias] = host
-		existing = append(existing, host)
-		result.Imported++
-	}
-
-	if result.Imported == 0 {
-		return result, nil
-	}
-	if err := store.SaveHosts(existing); err != nil {
-		return ImportResult{}, err
-	}
-	if err := WriteManagedConfig(store.ManagedSSHConfigPath(), existing); err != nil {
-		return ImportResult{}, err
-	}
-	return result, nil
+	discovery.Candidates = ReconcileCandidates(discovery.Candidates, existing)
+	return ImportCandidates(store, discovery.Candidates)
 }
 
 func ParseOpenSSHConfigs(mainConfig string, managedPath string) ([]config.Host, error) {
@@ -210,13 +241,14 @@ func (b importBlock) toHosts() []config.Host {
 			identity = config.DefaultIdentityFile()
 		}
 		hosts = append(hosts, config.Host{
-			Alias:        alias,
-			HostName:     hostName,
-			Port:         port,
-			User:         user,
-			Group:        b.group,
-			IdentityFile: identity,
-			SSHOptions:   append([]string{}, b.sshOptions...),
+			Alias:         alias,
+			HostName:      hostName,
+			Port:          port,
+			User:          user,
+			Group:         b.group,
+			IdentityFiles: []string{identity},
+			SSHOptions:    append([]string{}, b.sshOptions...),
+			Management:    config.ManagementManaged,
 		})
 	}
 	return hosts
@@ -241,7 +273,7 @@ func splitDirective(line string) (string, string, bool) {
 }
 
 func parseAliases(value string) []string {
-	fields := strings.Fields(value)
+	fields := tokenizeSSHValue(value)
 	aliases := make([]string, 0, len(fields))
 	for _, field := range fields {
 		aliases = append(aliases, strings.TrimSpace(field))
@@ -257,7 +289,7 @@ func isImportableAlias(alias string) bool {
 }
 
 func expandIncludePaths(baseDir string, value string) []string {
-	fields := strings.Fields(value)
+	fields := tokenizeSSHValue(value)
 	paths := make([]string, 0, len(fields))
 	for _, field := range fields {
 		field = expandPath(field)
@@ -272,6 +304,55 @@ func expandIncludePaths(baseDir string, value string) []string {
 		paths = append(paths, matches...)
 	}
 	return paths
+}
+
+func tokenizeSSHValue(value string) []string {
+	var fields []string
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	flush := func() {
+		if current.Len() > 0 {
+			fields = append(fields, current.String())
+			current.Reset()
+		}
+	}
+	for _, r := range value {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			continue
+		}
+		if r == '#' {
+			break
+		}
+		if r == ' ' || r == '\t' {
+			flush()
+			continue
+		}
+		current.WriteRune(r)
+	}
+	if escaped {
+		current.WriteRune('\\')
+	}
+	flush()
+	return fields
 }
 
 func expandPath(path string) string {

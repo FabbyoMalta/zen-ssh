@@ -7,13 +7,16 @@ LDFLAGS := -s -w \
 	-X zenssh/internal/version.Commit=$(COMMIT) \
 	-X zenssh/internal/version.Date=$(DATE)
 
-.PHONY: build test clean release
+.PHONY: build test install clean release
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) ./cmd/zenssh
 
 test:
 	go test ./...
+
+install: build
+	install -Dm755 bin/$(APP_NAME) "$(DESTDIR)/usr/local/bin/$(APP_NAME)"
 
 release:
 	./scripts/package-release.sh "$(VERSION)"

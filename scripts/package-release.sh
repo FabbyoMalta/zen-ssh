@@ -11,7 +11,7 @@ build_target() {
 	local goos="$1"
 	local goarch="$2"
 	local out_dir="${DIST_DIR}/${APP_NAME}_${VERSION}_${goos}_${goarch}"
-	local archive="${DIST_DIR}/${APP_NAME}_${VERSION}_${goos}_${goarch}.tar.gz"
+	local archive="${DIST_DIR}/${APP_NAME}_${goos}_${goarch}.tar.gz"
 	local commit
 	local date
 
@@ -29,11 +29,19 @@ build_target() {
 
 	cp "${ROOT_DIR}/README.md" "${out_dir}/README.md"
 	tar -C "${DIST_DIR}" -czf "${archive}" "$(basename "${out_dir}")"
+	rm -rf "${out_dir}"
 }
 
 mkdir -p "${DIST_DIR}"
 
+rm -f "${DIST_DIR}"/${APP_NAME}_linux_*.tar.gz "${DIST_DIR}/SHA256SUMS"
+
 build_target linux amd64
 build_target linux arm64
+
+(
+	cd "${DIST_DIR}"
+	sha256sum "${APP_NAME}_linux_amd64.tar.gz" "${APP_NAME}_linux_arm64.tar.gz" > SHA256SUMS
+)
 
 printf 'Pacotes gerados em %s\n' "${DIST_DIR}"

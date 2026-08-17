@@ -21,6 +21,75 @@ type ProbeResult struct {
 	Message string
 }
 
+func ValidateKeyAuthentication(host config.Host) error {
+	if host.PrimaryIdentity() == "" && host.Management != config.ManagementReadOnly {
+		return fmt.Errorf("nenhuma chave associada ao host")
+	}
+	args := []string{
+		"-o", "BatchMode=yes",
+		"-o", "PasswordAuthentication=no",
+		"-o", "KbdInteractiveAuthentication=no",
+		"-o", "PreferredAuthentications=publickey",
+		"-o", "StrictHostKeyChecking=yes",
+		"-o", "ConnectTimeout=5",
+	}
+	if host.Management == config.ManagementReadOnly {
+		args = append(args, host.Alias, "true")
+	} else {
+		args = append(args, sshArgs(host, host.SSHOptions)...)
+		args = append(args, "true")
+	}
+	cmd := exec.Command("ssh", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			return err
+		}
+		return classifyCompatError(err, message)
+	}
+	return nil
+}
+
+func IsHostKnown(host config.Host) bool {
+	query := host.HostName
+	for _, option := range host.SSHOptions {
+		parts := strings.SplitN(option, "=", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "HostKeyAlias") {
+			query = parts[1]
+			break
+		}
+	}
+	if host.Port != 0 && host.Port != 22 {
+		query = fmt.Sprintf("[%s]:%d", query, host.Port)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	files := []string{filepath.Join(home, ".ssh", "known_hosts"), filepath.Join(home, ".ssh", "known_hosts2")}
+	for _, option := range host.SSHOptions {
+		parts := strings.SplitN(option, "=", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "UserKnownHostsFile") {
+			continue
+		}
+		files = nil
+		for _, path := range strings.Fields(parts[1]) {
+			files = append(files, expandPath(path))
+		}
+	}
+	for _, file := range files {
+		if _, err := os.Stat(file); err != nil {
+			continue
+		}
+		if exec.Command("ssh-keygen", "-F", query, "-f", file).Run() == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func EnsureMainConfigIncludes(managedPath string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -80,7 +149,12 @@ func ensureIncludePlacedFirst(mainConfig, content, includeMarker string) error {
 	if result == content {
 		return nil
 	}
-	return os.WriteFile(mainConfig, []byte(result), 0o600)
+	if content != "" {
+		if err := backupOnce(mainConfig); err != nil {
+			return err
+		}
+	}
+	return atomicWriteFile(mainConfig, []byte(result), 0o600)
 }
 
 func RenderManagedConfig(hosts []config.Host) string {
@@ -88,6 +162,9 @@ func RenderManagedConfig(hosts []config.Host) string {
 	b.WriteString("# Managed by ZenSSH. Do not edit manually.\n\n")
 
 	for _, host := range hosts {
+		if host.Management == config.ManagementReadOnly {
+			continue
+		}
 		fmt.Fprintf(&b, "Host %s\n", host.Alias)
 		fmt.Fprintf(&b, "  HostName %s\n", host.HostName)
 		if host.User != "" {
@@ -96,12 +173,13 @@ func RenderManagedConfig(hosts []config.Host) string {
 		if host.Port > 0 {
 			fmt.Fprintf(&b, "  Port %d\n", host.Port)
 		}
-		if host.IdentityFile != "" {
-			fmt.Fprintf(&b, "  IdentityFile %s\n", host.IdentityFile)
+		for _, identity := range host.IdentityFiles {
+			fmt.Fprintf(&b, "  IdentityFile %s\n", identity)
 		}
-		b.WriteString("  IdentitiesOnly yes\n")
-		b.WriteString("  ServerAliveInterval 30\n")
-		b.WriteString("  ServerAliveCountMax 3\n")
+		if host.Management == config.ManagementManual {
+			b.WriteString("  ServerAliveInterval 30\n")
+			b.WriteString("  ServerAliveCountMax 3\n")
+		}
 		for _, option := range host.SSHOptions {
 			fmt.Fprintf(&b, "  %s\n", option)
 		}
@@ -115,7 +193,89 @@ func RenderManagedConfig(hosts []config.Host) string {
 }
 
 func WriteManagedConfig(path string, hosts []config.Host) error {
-	return os.WriteFile(path, []byte(RenderManagedConfig(hosts)), 0o600)
+	content := []byte(RenderManagedConfig(hosts))
+	if err := validateManagedConfig(filepath.Dir(path), content, hosts); err != nil {
+		return err
+	}
+	if err := atomicWriteFile(path, content, 0o600); err != nil {
+		return err
+	}
+	return EnsureMainConfigIncludes(path)
+}
+
+func validateManagedConfig(dir string, content []byte, hosts []config.Host) error {
+	tmp, err := os.CreateTemp(dir, ".zenssh-validate-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	for _, host := range hosts {
+		if host.Management == config.ManagementReadOnly {
+			continue
+		}
+		cmd := exec.Command("ssh", "-F", name, "-G", host.Alias)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("configuracao SSH invalida para %s: %s", host.Alias, strings.TrimSpace(string(output)))
+		}
+	}
+	return nil
+}
+
+func backupOnce(path string) error {
+	backup := path + ".zenssh.bak"
+	if _, err := os.Stat(backup); err == nil {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(backup, data, 0o600)
+}
+
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	target := path
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return err
+		}
+		target = resolved
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".zenssh-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, target)
 }
 
 func GenerateKey(identityFile string) error {
@@ -159,6 +319,9 @@ func Connect(host config.Host) (config.Host, error) {
 }
 
 func PrepareConnect(host config.Host) (config.Host, *exec.Cmd, error) {
+	if host.Management == config.ManagementReadOnly {
+		return host, exec.Command("ssh", host.Alias), nil
+	}
 	options, err := resolveCompatOptions(host)
 	if err != nil {
 		return host, nil, err
@@ -171,13 +334,24 @@ func PrepareConnect(host config.Host) (config.Host, *exec.Cmd, error) {
 }
 
 func PreparePushKey(host config.Host) (config.Host, *exec.Cmd, error) {
+	if host.Management == config.ManagementReadOnly {
+		identity := host.PrimaryIdentity()
+		if identity == "" {
+			return host, nil, fmt.Errorf("host sem chave associada")
+		}
+		return host, exec.Command("ssh-copy-id", "-i", identity+".pub", host.Alias), nil
+	}
 	options, err := resolveCompatOptions(host)
 	if err != nil {
 		return host, nil, err
 	}
 
 	host.SSHOptions = options
-	pub := host.IdentityFile + ".pub"
+	identity := host.PrimaryIdentity()
+	if identity == "" {
+		return host, nil, fmt.Errorf("host sem chave associada")
+	}
+	pub := identity + ".pub"
 	args := []string{"-i", pub}
 	if host.Port > 0 {
 		args = append(args, "-p", fmt.Sprintf("%d", host.Port))
@@ -224,13 +398,12 @@ func Probe(host config.Host) (ProbeResult, error) {
 }
 
 func sshArgs(host config.Host, options []string) []string {
-	args := []string{
-		"-o", "IdentitiesOnly=yes",
-		"-o", "ServerAliveInterval=30",
-		"-o", "ServerAliveCountMax=3",
+	args := []string{}
+	if host.Management == config.ManagementManual {
+		args = append(args, "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3")
 	}
-	if host.IdentityFile != "" {
-		args = append(args, "-i", host.IdentityFile)
+	for _, identity := range host.IdentityFiles {
+		args = append(args, "-i", identity)
 	}
 	if host.Port > 0 {
 		args = append(args, "-p", fmt.Sprintf("%d", host.Port))
