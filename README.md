@@ -1,105 +1,257 @@
 # ZenSSH
 
-ZenSSH e uma TUI para Linux que gerencia aliases SSH com base no proprio OpenSSH.
+ZenSSH é um gerenciador de conexões SSH para terminal. Ele oferece uma TUI responsiva para organizar hosts, aliases, portas, usuários, grupos e identidades, reutilizando o OpenSSH instalado no sistema para todas as operações de rede e autenticação.
 
-## O que faz
+O projeto não implementa um cliente SSH próprio e não armazena chaves privadas. Sua função é organizar configurações existentes, gerar um arquivo compatível com OpenSSH e facilitar tarefas recorrentes como conexão, diagnóstico, geração e envio de chaves.
 
-- cadastro guiado de hosts
-- persistencia local em `~/.config/zenssh/hosts.json`
-- geracao de um arquivo gerenciado em `~/.config/zenssh/ssh_config`
-- onboarding seguro na primeira execucao, antes de alterar o SSH do usuario
-- descoberta de aliases em `~/.ssh/config` e seus arquivos `Include`
-- resolucao da configuracao efetiva com `ssh -G` (inclui regras de `/etc/ssh/ssh_config`)
-- descoberta opcional de candidatos em `/etc/hosts`
-- descoberta de chaves privadas existentes em `~/.ssh` sem copiar seu conteudo
-- suporte a multiplas identidades e certificados SSH por host
-- hosts externos em modo somente leitura ou gerenciado pelo ZenSSH
-- sincronizacao com deteccao de alteracoes, remocoes e conflitos
-- validacao do arquivo gerado pelo proprio OpenSSH antes da instalacao
-- gravacao transacional com rollback em caso de falha
-- injecao idempotente de `Include ~/.config/zenssh/ssh_config` em `~/.ssh/config`, com backup
-- conexao SSH por alias
-- camada de diagnostico SSH com retry automatico para servidores legados (`ssh-rsa`, KEX antigos)
-- geracao de chave `ed25519`
-- envio de chave com `ssh-copy-id`
+## Recursos
 
-## Executar
+- descoberta inicial de configurações existentes;
+- importação de aliases de `~/.ssh/config` e arquivos declarados com `Include`;
+- resolução da configuração efetiva por meio de `ssh -G`, incluindo regras de `/etc/ssh/ssh_config`;
+- descoberta opcional de hosts registrados em `/etc/hosts`;
+- identificação de chaves privadas em `~/.ssh`, mantendo apenas a referência aos arquivos;
+- cadastro e edição guiada de hosts;
+- suporte a múltiplas identidades e certificados por host;
+- agrupamento, seleção em massa e filtros por grupo;
+- busca por alias, endereço, usuário, grupo ou origem;
+- distinção entre hosts importados em modo somente leitura e hosts gerenciados;
+- sincronização com detecção de alterações, remoções e conflitos;
+- geração de chaves Ed25519 e envio com `ssh-copy-id`;
+- validação explícita de autenticação por chave, sem fallback para senha;
+- compatibilidade assistida com servidores que exigem algoritmos SSH legados;
+- interface adaptável a terminais largos, médios e compactos;
+- suporte a terminais claros, escuros e à variável `NO_COLOR`.
 
-```bash
-go run ./cmd/zenssh
-```
+## Requisitos
 
-## Instalacao rapida
+- Linux em arquitetura `amd64` ou `arm64`;
+- OpenSSH, incluindo `ssh`, `ssh-keygen` e `ssh-copy-id`;
+- `curl` ou `wget` para instalação automática;
+- `tar` e uma ferramenta de verificação SHA-256.
 
-Depois que houver pelo menos uma release publicada, instale ou atualize para a versao mais recente com um unico comando:
+O instalador reconhece `apt`, `dnf`, `yum`, `pacman`, `apk` e `zypper` e pode instalar o cliente OpenSSH quando necessário.
+
+## Instalação
+
+### Instalação rápida
+
+Com `curl`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FabbyoMalta/zen-ssh/main/install.sh | sh
 ```
 
-Se `curl` nao estiver disponivel:
+Com `wget`:
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/FabbyoMalta/zen-ssh/main/install.sh | sh
 ```
 
-O instalador:
+O script baixa a release mais recente, verifica o arquivo com `SHA256SUMS` e instala o executável em `/usr/local/bin/zenssh`. Quando não há acesso administrativo, utiliza `~/.local/bin` como alternativa.
 
-- suporta Linux `amd64` e `arm64`
-- baixa a release mais recente diretamente do GitHub
-- valida o arquivo usando `SHA256SUMS`
-- instala OpenSSH quando a dependencia estiver ausente e o gerenciador de pacotes for reconhecido
-- instala em `/usr/local/bin/zenssh`, usando `sudo` quando necessario
-- usa `~/.local/bin` como fallback quando `sudo` nao estiver disponivel
-- pode ser executado novamente para atualizar o ZenSSH
+O mesmo comando pode ser executado novamente para atualizar uma instalação existente.
 
-Para instalar uma versao especifica:
+### Versão ou diretório específico
+
+Para instalar uma versão específica:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FabbyoMalta/zen-ssh/main/install.sh | ZENSSH_VERSION=v0.3.0 sh
+curl -fsSL https://raw.githubusercontent.com/FabbyoMalta/zen-ssh/main/install.sh \
+  | ZENSSH_VERSION=v0.3.0 sh
 ```
 
-Para escolher outro diretorio:
+Para instalar somente para o usuário atual:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FabbyoMalta/zen-ssh/main/install.sh | ZENSSH_INSTALL_DIR="$HOME/.local/bin" sh
+curl -fsSL https://raw.githubusercontent.com/FabbyoMalta/zen-ssh/main/install.sh \
+  | ZENSSH_INSTALL_DIR="$HOME/.local/bin" sh
 ```
 
-Confira a instalacao:
+Verifique a instalação com:
 
 ```bash
 zenssh --version
 ```
 
-## Build local
+## Primeira execução
+
+Inicie a interface executando:
+
+```bash
+zenssh
+```
+
+Na primeira execução, o ZenSSH analisa a configuração local e apresenta uma revisão antes de realizar qualquer alteração:
+
+- aliases explícitos do OpenSSH são sugeridos em modo somente leitura;
+- entradas de `/etc/hosts` aparecem como candidatos opcionais;
+- identidades encontradas em `~/.ssh` podem ser associadas aos hosts;
+- nenhuma chave privada é copiada ou enviada automaticamente;
+- nenhuma configuração é gravada antes da confirmação do usuário.
+
+Controles da revisão inicial:
+
+| Tecla | Ação |
+| --- | --- |
+| `Espaço` | Marcar ou desmarcar uma entrada |
+| `a` | Selecionar todas as entradas válidas |
+| `n` | Limpar a seleção |
+| `c` | Alternar a identidade associada |
+| `o` | Alternar entre somente leitura e gerenciado |
+| `Enter` | Confirmar a importação |
+| `Esc` | Cancelar sem modificar a configuração |
+
+Após a confirmação, o ZenSSH cria um backup em `~/.ssh/config.zenssh.bak` e adiciona de forma idempotente a diretiva:
+
+```sshconfig
+Include ~/.config/zenssh/ssh_config
+```
+
+## Uso da interface
+
+### Navegação e hosts
+
+| Tecla | Ação |
+| --- | --- |
+| `↑` / `k` | Selecionar o host anterior |
+| `↓` / `j` | Selecionar o próximo host |
+| `Enter` | Conectar ao host selecionado |
+| `/` | Buscar hosts |
+| `a` | Adicionar um host |
+| `e` | Editar o host selecionado |
+| `d` | Remover o host selecionado |
+| `i` | Sincronizar novamente as configurações locais |
+| `?` | Exibir a ajuda completa |
+| `q` | Encerrar o ZenSSH |
+
+### Grupos e seleção em massa
+
+| Tecla | Ação |
+| --- | --- |
+| `[` / `]` | Navegar entre as abas de grupos |
+| `Shift+S` | Entrar ou sair do modo de seleção |
+| `Espaço` | Marcar ou desmarcar um host no modo de seleção |
+| `Shift+G` | Atribuir um grupo aos hosts selecionados |
+| `x` / `Esc` | Limpar a seleção e sair do modo de seleção |
+
+O campo de grupo pode ser deixado vazio para remover os hosts selecionados de seus grupos atuais. A busca é aplicada dentro da aba ativa. As abas disponíveis incluem `Todos`, os grupos cadastrados e `Sem grupo`.
+
+### SSH e diagnóstico
+
+| Tecla | Ação |
+| --- | --- |
+| `v` | Exibir diagnóstico do host |
+| `m` | Alternar host importado entre somente leitura e gerenciado |
+| `g` | Gerar uma chave SSH Ed25519 |
+| `s` | Enviar a chave pública com `ssh-copy-id` |
+| `t` | Validar autenticação por chave sem permitir senha |
+| `b` | Restaurar o backup de `~/.ssh/config` com confirmação |
+
+Ao iniciar uma conexão, a TUI é encerrada e o processo do ZenSSH é substituído pelo OpenSSH. Quando a sessão remota termina, o terminal retorna diretamente ao shell. Esse comportamento evita que a interface tente recuperar ou redesenhar o terminal após a conexão.
+
+## Cadastro de hosts
+
+O formulário permite definir:
+
+- alias;
+- hostname ou endereço IP;
+- porta;
+- usuário;
+- grupo;
+- uma ou mais identidades SSH.
+
+Controles adicionais do formulário:
+
+| Tecla | Ação |
+| --- | --- |
+| `Tab` / `Shift+Tab` | Navegar entre os campos e ações |
+| `Ctrl+N` | Adicionar outro arquivo de identidade |
+| `Ctrl+D` | Remover o arquivo de identidade selecionado |
+| `Espaço` | Alternar o envio da chave após salvar |
+| `Enter` | Executar a ação selecionada |
+| `Esc` | Cancelar o cadastro |
+
+## Modos de gerenciamento
+
+Hosts descobertos em arquivos externos podem operar em dois modos:
+
+- **somente leitura (`readonly`)**: o ZenSSH mantém a origem externa como autoridade e conecta utilizando o alias existente;
+- **gerenciado (`managed`)**: o host passa a ser representado no arquivo SSH gerado pelo ZenSSH.
+
+Hosts criados diretamente na interface utilizam o modo `manual`. A sincronização posterior compara fingerprints para identificar alterações seguras, remoções e conflitos.
+
+## Estados exibidos
+
+O dashboard separa dois conceitos que costumam ser confundidos:
+
+- **confiança no servidor**: indica se o destino está registrado em `known_hosts`;
+- **autenticação do usuário**: indica o estado da identidade usada para acessar o servidor.
+
+Estados de autenticação possíveis:
+
+| Estado | Significado |
+| --- | --- |
+| `sem-chave` | Nenhuma identidade específica foi associada |
+| `configurada` | Existe uma identidade local associada |
+| `envio-registrado` | O ZenSSH concluiu uma execução de `ssh-copy-id` |
+| `validada` | Um teste explícito autenticou com chave e sem senha |
+| `falhou` | O último teste explícito de autenticação falhou |
+
+O teste executado por `t` utiliza `BatchMode=yes`, desabilita autenticação por senha e exige que o servidor já seja conhecido. Ele nunca é iniciado automaticamente.
+
+## Arquivos e segurança
+
+O ZenSSH mantém seus dados em:
+
+| Caminho | Finalidade |
+| --- | --- |
+| `~/.config/zenssh/hosts.json` | Inventário e metadados dos hosts |
+| `~/.config/zenssh/ssh_config` | Configuração OpenSSH gerada |
+| `~/.config/zenssh/state.json` | Estado da primeira execução |
+| `~/.ssh/config.zenssh.bak` | Backup criado antes da primeira alteração |
+
+Medidas adotadas pelo projeto:
+
+- chaves privadas nunca são copiadas para o diretório do ZenSSH;
+- o inventário armazena somente caminhos de identidades;
+- o arquivo gerado é validado pelo próprio OpenSSH antes da instalação;
+- as gravações são transacionais e possuem rollback em caso de falha;
+- a inclusão no arquivo principal é idempotente;
+- testes de autenticação não permitem fallback para senha.
+
+## Desenvolvimento
+
+É necessário ter Go na versão declarada em `go.mod`.
+
+Executar diretamente pelo código-fonte:
+
+```bash
+go run ./cmd/zenssh
+```
+
+Compilar:
 
 ```bash
 make build
 ./bin/zenssh
 ```
 
-Para conferir a versao embutida no binario:
+Executar os testes:
 
 ```bash
-./bin/zenssh --version
+make test
 ```
 
-## Empacotamento para distribuicoes Linux
+## Releases
 
-O caminho mais simples para distribuir o ZenSSH em diferentes distribuicoes e publicar um binario estatico em `.tar.gz`.
-Como o app chama utilitarios do sistema em tempo de execucao, o host ainda precisa ter OpenSSH instalado:
-
-- Debian/Ubuntu: `openssh-client`
-- Fedora/RHEL: `openssh-clients`
-- Arch: `openssh`
-
-Para gerar artefatos de release para Linux `amd64` e `arm64`:
+Para gerar localmente os pacotes Linux para `amd64` e `arm64`:
 
 ```bash
-make release VERSION=0.1.0
+make release VERSION=v0.3.0
 ```
 
-Isso cria os assets estaveis usados pelo instalador:
+Os artefatos são gravados em `dist/`:
 
 ```text
 dist/zenssh_linux_amd64.tar.gz
@@ -107,86 +259,11 @@ dist/zenssh_linux_arm64.tar.gz
 dist/SHA256SUMS
 ```
 
-Cada pacote contem:
-
-- binario `zenssh`
-- `README.md`
-
-Instalacao manual em qualquer distribuicao:
+Tags com prefixo `v` acionam o workflow de release do GitHub Actions:
 
 ```bash
-tar -xzf zenssh_linux_amd64.tar.gz
-sudo install -m 0755 zenssh_0.1.0_linux_amd64/zenssh /usr/local/bin/zenssh
-```
-
-## Publicar uma release
-
-O workflow de release e executado automaticamente para tags iniciadas por `v`:
-
-```bash
-git tag v0.3.0
+git tag -a v0.3.0 -m "ZenSSH v0.3.0"
 git push origin v0.3.0
 ```
 
-O GitHub Actions executa os testes, gera os binarios Linux `amd64` e `arm64`, cria os checksums e publica os tres arquivos na GitHub Release. O instalador rapido so funcionara depois da primeira tag/release publicada.
-
-## Controles
-
-- `a`: adicionar host
-- `i`: importar aliases do `~/.ssh/config`
-- `/`: buscar por alias, endereco, grupo ou origem
-- `S`: entrar ou sair do modo de selecao em massa
-- `Espaco`: no modo de selecao, marcar ou desmarcar um host
-- `G`: mover os hosts selecionados para um grupo
-- `[` / `]`: navegar pelas abas de grupos
-- `x`: limpar a selecao de hosts
-- `v`: mostrar diagnostico do host sem exibir material privado
-- `m`: alternar host importado entre somente leitura e gerenciado
-- `b`: restaurar `~/.ssh/config.zenssh.bak` com confirmacao
-- `e`: editar host selecionado
-- `d`: remover host selecionado
-- `g`: gerar chave SSH
-- `s`: enviar chave SSH
-- `t`: validar explicitamente autenticacao por chave, sem permitir senha
-- `Enter`: conectar via SSH
-- `?`: abrir a ajuda completa de atalhos
-- `q`: sair
-
-Ao conectar, o ZenSSH encerra a TUI e substitui seu processo pelo OpenSSH. Quando a sessao remota terminar, o terminal volta diretamente ao shell; execute `zenssh` novamente para abrir o gerenciador.
-
-## Primeira execucao
-
-Na primeira abertura, o ZenSSH apenas le a configuracao existente e apresenta uma tela de revisao:
-
-- aliases explicitos do OpenSSH ficam selecionados para importacao em modo somente leitura
-- entradas de `/etc/hosts` aparecem como candidatos opcionais e ficam desmarcadas
-- `Espaco` marca ou desmarca uma entrada
-- `c` alterna entre as chaves descobertas para o host selecionado
-- `o` alterna entre somente leitura e gerenciamento pelo ZenSSH
-- `a` seleciona todas e `n` desmarca todas
-- `Enter` confirma a importacao
-- `Esc` cancela sem alterar `~/.ssh/config`
-
-Ao confirmar, o arquivo original e preservado em `~/.ssh/config.zenssh.bak` antes da primeira alteracao. As chaves privadas continuam em seus caminhos originais; o ZenSSH guarda somente a referencia ao arquivo.
-
-A tecla `i` executa a descoberta novamente para importar configuracoes adicionadas depois.
-Ela tambem identifica alteracoes, remocoes e conflitos. Alteracoes seguras ficam selecionadas; conflitos exigem selecao explicita antes de substituir a versao local.
-
-## Estados SSH no overview
-
-A lista separa a confianca no servidor da autenticacao do usuario:
-
-- `servidor:conhecido` significa que o destino foi encontrado em um arquivo `known_hosts`
-- `chave:configurada` significa que existe uma identidade local associada
-- `chave:envio-registrado` significa que o ZenSSH concluiu um `ssh-copy-id`
-- `chave:validada` significa que um teste explicito autenticou usando chave, sem senha
-- `chave:falhou` registra que o ultimo teste explicito nao validou a autenticacao
-
-O teste da tecla `t` usa `BatchMode=yes`, desabilita senha e exige que o servidor ja seja conhecido. Ele pode gerar registro de conexao no servidor, mas nunca e executado automaticamente.
-
-## Cadastro de host
-
-- `Espaco`: alterna "enviar chave agora"
-- `Ctrl+N`: adiciona outro arquivo de identidade SSH
-- `Ctrl+D`: remove o arquivo de identidade selecionado
-- "Salvar, testar e conectar" valida a configuracao e abre a sessao SSH
+O workflow executa os testes, compila os binários, gera os checksums e publica uma GitHub Release com notas automáticas.
