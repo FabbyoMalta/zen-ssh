@@ -30,7 +30,7 @@ type Theme struct {
 func New() Theme {
 	accent := lipgloss.AdaptiveColor{Light: "25", Dark: "81"}
 	text := lipgloss.AdaptiveColor{Light: "235", Dark: "252"}
-	muted := lipgloss.AdaptiveColor{Light: "241", Dark: "245"}
+	muted := lipgloss.AdaptiveColor{Light: "238", Dark: "250"}
 	border := lipgloss.AdaptiveColor{Light: "250", Dark: "238"}
 	selected := lipgloss.AdaptiveColor{Light: "153", Dark: "24"}
 	_, noColor := os.LookupEnv("NO_COLOR")
@@ -71,7 +71,7 @@ func New() Theme {
 			Foreground(lipgloss.Color("42")).
 			Bold(true),
 		Help: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("110")),
+			Foreground(text),
 		InputLabel: lipgloss.NewStyle().
 			Foreground(accent).
 			Bold(true),

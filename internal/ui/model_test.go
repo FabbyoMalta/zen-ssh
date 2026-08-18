@@ -3,11 +3,13 @@ package ui
 import (
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -23,6 +25,88 @@ func TestVisibleHostsFiltersAllMetadata(t *testing.T) {
 		if hosts := m.visibleHosts(); len(hosts) != 1 || hosts[0].Alias != "prod" {
 			t.Fatalf("query %q returned %#v", query, hosts)
 		}
+	}
+}
+
+func TestVisibleHostsFiltersByGroupAndSearch(t *testing.T) {
+	m := Model{hosts: []config.Host{
+		{Alias: "prod-api", Group: "producao"},
+		{Alias: "prod-db", Group: "producao"},
+		{Alias: "dev-api", Group: "desenvolvimento"},
+		{Alias: "lab"},
+	}}
+	m.groupFilter = "producao"
+	m.query = "api"
+	got := m.visibleHosts()
+	if len(got) != 1 || got[0].Alias != "prod-api" {
+		t.Fatalf("unexpected filtered hosts: %#v", got)
+	}
+	m.groupFilter = ungroupedFilter
+	m.query = ""
+	got = m.visibleHosts()
+	if len(got) != 1 || got[0].Alias != "lab" {
+		t.Fatalf("unexpected ungrouped hosts: %#v", got)
+	}
+}
+
+func TestGroupTabsAreUniqueAndSorted(t *testing.T) {
+	m := Model{hosts: []config.Host{{Group: "producao"}, {Group: "Dev"}, {Group: "PRODUCAO"}, {}}}
+	got := m.groupTabs()
+	want := []string{"", "Dev", "producao", ungroupedFilter}
+	if !slices.Equal(got, want) {
+		t.Fatalf("tabs = %#v, want %#v", got, want)
+	}
+}
+
+func TestBulkGroupUpdatesOnlySelectedHosts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	store, err := config.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	hosts := []config.Host{
+		{Alias: "one", HostName: "one.local", User: "root", Port: 22, Management: config.ManagementManual},
+		{Alias: "two", HostName: "two.local", User: "root", Port: 22, Management: config.ManagementManual},
+	}
+	if err := sshcfg.SaveAll(store, hosts); err != nil {
+		t.Fatal(err)
+	}
+	input := textinput.New()
+	input.SetValue("infra")
+	m := Model{store: store, hosts: hosts, selected: map[string]bool{"one": true}, groupInput: input, theme: style.New()}
+	updated, _ := m.updateBulkGroup(tea.KeyMsg{Type: tea.KeyEnter})
+	result := updated.(Model)
+	if result.hosts[0].Group != "infra" || result.hosts[1].Group != "" {
+		t.Fatalf("unexpected groups: %#v", result.hosts)
+	}
+	if len(result.selected) != 0 || result.groupFilter != "infra" {
+		t.Fatalf("selection/filter not updated: %#v / %q", result.selected, result.groupFilter)
+	}
+}
+
+func TestSelectionMarkersOnlyAppearInSelectionMode(t *testing.T) {
+	layout := calculateLayout(80, 30)
+	m := Model{
+		theme: style.New(), layout: layout, viewport: viewport.New(layout.listWidth, layout.listHeight),
+		hosts:    []config.Host{{Alias: "prod", HostName: "prod.local", User: "root", Port: 22}},
+		selected: map[string]bool{}, knownHosts: map[string]bool{},
+	}
+	if view := m.renderDashboard(); strings.Contains(view, "[ ]") {
+		t.Fatalf("selection marker visible outside selection mode: %q", view)
+	}
+	updated, _ := m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}})
+	m = updated.(Model)
+	if !m.selectionMode || !strings.Contains(m.renderDashboard(), "[ ]") {
+		t.Fatal("selection mode did not reveal markers")
+	}
+	updated, _ = m.updateList(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(Model)
+	if !m.selected["prod"] || !strings.Contains(m.renderDashboard(), "[x]") {
+		t.Fatal("space did not select the current host")
 	}
 }
 
@@ -49,7 +133,7 @@ func TestDashboardRendersAtResponsiveWidths(t *testing.T) {
 			knownHosts: map[string]bool{"production-api": true},
 		}
 		view := m.renderDashboard()
-		if !strings.Contains(view, "production-api") || !strings.Contains(view, "api.examp") {
+		if !strings.Contains(view, "production-api") || !strings.Contains(view, "deploy@api") {
 			t.Fatalf("width %d omitted host data: %q", width, view)
 		}
 	}

@@ -135,6 +135,11 @@ O GitHub Actions executa os testes, gera os binarios Linux `amd64` e `arm64`, cr
 - `a`: adicionar host
 - `i`: importar aliases do `~/.ssh/config`
 - `/`: buscar por alias, endereco, grupo ou origem
+- `S`: entrar ou sair do modo de selecao em massa
+- `Espaco`: no modo de selecao, marcar ou desmarcar um host
+- `G`: mover os hosts selecionados para um grupo
+- `[` / `]`: navegar pelas abas de grupos
+- `x`: limpar a selecao de hosts
 - `v`: mostrar diagnostico do host sem exibir material privado
 - `m`: alternar host importado entre somente leitura e gerenciado
 - `b`: restaurar `~/.ssh/config.zenssh.bak` com confirmacao
