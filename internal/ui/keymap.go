@@ -31,13 +31,17 @@ func newKeyMap() keyMap {
 		GenerateKey:    key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "gerar chave")),
 		PushKey:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "enviar chave")),
 		ValidateKey:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "validar chave")),
-		SelectionMode:  key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "modo selecao")),
+		SelectionMode:  key.NewBinding(key.WithKeys("S"), key.WithHelp("shift+s", "modo selecao")),
 		Select:         key.NewBinding(key.WithKeys(" "), key.WithHelp("espaco", "marcar")),
 		ClearSelection: key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "limpar selecao")),
-		BulkGroup:      key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "agrupar selecao")),
+		BulkGroup:      key.NewBinding(key.WithKeys("G"), key.WithHelp("shift+g", "agrupar selecao")),
 		PreviousGroup:  key.NewBinding(key.WithKeys("["), key.WithHelp("[", "grupo anterior")),
 		NextGroup:      key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "proximo grupo")),
 	}
+}
+
+func (k keyMap) SelectionHelp() []key.Binding {
+	return []key.Binding{k.Select, k.BulkGroup, k.ClearSelection, k.Help}
 }
 
 func (k keyMap) ShortHelp() []key.Binding {

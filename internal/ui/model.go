@@ -398,7 +398,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "S":
 		m.selectionMode = !m.selectionMode
 		if m.selectionMode {
-			m.status = "Modo de selecao ativo. Use Espaco para marcar hosts e G para agrupá-los."
+			m.status = "Modo de selecao ativo. Use Espaco para marcar hosts e Shift+G para agrupá-los."
 		} else {
 			m.selected = map[string]bool{}
 			m.status = "Modo de selecao encerrado."
@@ -1049,7 +1049,11 @@ func (m Model) renderBusy() string {
 }
 
 func (m Model) renderFooter() string {
-	return lipgloss.JoinVertical(lipgloss.Left, m.statusStyle.Render(fitText(m.status, m.layout.contentWidth)), m.theme.Help.Render(m.help.View(m.keys)))
+	helpView := m.help.View(m.keys)
+	if m.selectionMode {
+		helpView = m.help.ShortHelpView(m.keys.SelectionHelp())
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, m.statusStyle.Render(fitText(m.status, m.layout.contentWidth)), m.theme.Help.Render(helpView))
 }
 
 func (m Model) renderWelcome() string {
