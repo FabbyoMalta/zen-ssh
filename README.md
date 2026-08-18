@@ -144,7 +144,10 @@ O GitHub Actions executa os testes, gera os binarios Linux `amd64` e `arm64`, cr
 - `s`: enviar chave SSH
 - `t`: validar explicitamente autenticacao por chave, sem permitir senha
 - `Enter`: conectar via SSH
+- `?`: abrir a ajuda completa de atalhos
 - `q`: sair
+
+Ao conectar, o ZenSSH encerra a TUI e substitui seu processo pelo OpenSSH. Quando a sessao remota terminar, o terminal volta diretamente ao shell; execute `zenssh` novamente para abrir o gerenciador.
 
 ## Primeira execucao
 
@@ -178,6 +181,7 @@ O teste da tecla `t` usa `BatchMode=yes`, desabilita senha e exige que o servido
 
 ## Cadastro de host
 
-- `Espaco`: alterna "enviar chave agora" e "testar conexao ao salvar"
-- `t`: testa o host preenchido sem sair do formulario
-- o teste valida alcance, negociacao de algoritmos e persistencia de opcoes compativeis
+- `Espaco`: alterna "enviar chave agora"
+- `Ctrl+N`: adiciona outro arquivo de identidade SSH
+- `Ctrl+D`: remove o arquivo de identidade selecionado
+- "Salvar, testar e conectar" valida a configuracao e abre a sessao SSH

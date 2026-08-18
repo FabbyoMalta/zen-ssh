@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -31,6 +33,7 @@ const (
 	modeSearch
 	modeDetails
 	modeConfirmRestore
+	modeHelp
 )
 
 type operation int
@@ -91,6 +94,7 @@ type formState struct {
 	editing    bool
 	original   string
 	inputs     []textinput.Model
+	identities []textinput.Model
 	sshOptions []string
 	sendKey    bool
 	cursor     int
@@ -122,6 +126,11 @@ type Model struct {
 	query       string
 	details     string
 	knownHosts  map[string]bool
+	handoffCmd  *exec.Cmd
+	keys        keyMap
+	help        help.Model
+	viewport    viewport.Model
+	layout      layoutState
 }
 
 func NewModel(store *config.Store) (Model, error) {
@@ -133,6 +142,8 @@ func NewModel(store *config.Store) (Model, error) {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))
+	h := help.New()
+	h.ShowAll = false
 
 	m := Model{
 		store:       store,
@@ -143,6 +154,10 @@ func NewModel(store *config.Store) (Model, error) {
 		statusStyle: style.New().Subtle,
 		spinner:     s,
 		knownHosts:  map[string]bool{},
+		keys:        newKeyMap(),
+		help:        h,
+		viewport:    viewport.New(80, 12),
+		layout:      calculateLayout(100, 30),
 	}
 	if store.IsFirstRun() {
 		discovery, discoverErr := sshcfg.Discover(store.ManagedSSHConfigPath())
@@ -171,6 +186,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.layout = calculateLayout(msg.Width, msg.Height)
+		m.help.Width = m.layout.contentWidth
+		m.viewport.Width = maxInt(20, m.layout.listWidth-4)
+		m.viewport.Height = maxInt(3, m.layout.listHeight-4)
 		return m, nil
 	case spinner.TickMsg:
 		if m.mode == modeBusy {
@@ -217,6 +236,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshKnownHosts()
 		return m, nil
 	case execRequestMsg:
+		if msg.op == opConnect {
+			if err := persistHostOptions(m.store, msg.host); err != nil {
+				m.mode = modeList
+				m.status = fmt.Sprintf("Falha: %v", err)
+				m.statusStyle = m.theme.Danger
+				return m, nil
+			}
+			m.handoffCmd = msg.cmd
+			return m, tea.Quit
+		}
 		return m, tea.ExecProcess(msg.cmd, func(err error) tea.Msg {
 			return execFinishedMsg{
 				op:           msg.op,
@@ -264,10 +293,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusStyle = m.theme.Danger
 					return m, nil
 				}
+				if err := persistHostOptions(m.store, updatedHost); err != nil {
+					m.pendingOp = opNone
+					m.mode = modeList
+					m.status = fmt.Sprintf("Falha: %v", err)
+					m.statusStyle = m.theme.Danger
+					return m, nil
+				}
 				m.pendingOp = opConnect
-				return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-					return execFinishedMsg{op: opConnect, host: updatedHost, err: err}
-				})
+				m.handoffCmd = cmd
+				return m, tea.Quit
 			}
 
 			m.pendingOp = opNone
@@ -325,6 +360,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case modeConfirmRestore:
 			return m.updateRestore(msg)
+		case modeHelp:
+			if msg.String() == "?" || msg.String() == "esc" || msg.String() == "q" {
+				m.mode = modeList
+			}
+			return m, nil
 		}
 	}
 	return m, nil
@@ -334,6 +374,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "?":
+		m.mode = modeHelp
+		return m, nil
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
@@ -420,17 +463,23 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.statusStyle = m.theme.Danger
 				return m, nil
 			}
-			m.mode = modeBusy
+			if err := persistHostOptions(m.store, updatedHost); err != nil {
+				m.status = fmt.Sprintf("Falha: %v", err)
+				m.statusStyle = m.theme.Danger
+				return m, nil
+			}
 			m.pendingOp = opConnect
-			return m, tea.Batch(
-				m.spinner.Tick,
-				tea.ExecProcess(cmd, func(err error) tea.Msg {
-					return execFinishedMsg{op: opConnect, host: updatedHost, err: err}
-				}),
-			)
+			m.handoffCmd = cmd
+			return m, tea.Quit
 		}
 	}
 	return m, nil
+}
+
+// HandoffCommand returns the command that should replace ZenSSH after Bubble
+// Tea has restored the terminal. A nil command means the user only quit.
+func (m Model) HandoffCommand() *exec.Cmd {
+	return m.handoffCmd
 }
 
 func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -546,41 +595,51 @@ func (m Model) updateRestore(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	fieldCount := m.form.fieldCount()
 	switch msg.String() {
 	case "esc":
 		m.mode = modeList
 		m.status = "Cadastro cancelado."
 		m.statusStyle = m.theme.Subtle
 		return m, nil
+	case "ctrl+n":
+		identity := newIdentityInput("")
+		m.form.blurAll()
+		m.form.identities = append(m.form.identities, identity)
+		m.form.cursor = len(m.form.inputs) + len(m.form.identities) - 1
+		m.form.focusCurrent()
+		return m, textinput.Blink
+	case "ctrl+d":
+		identityIndex := m.form.cursor - len(m.form.inputs)
+		if identityIndex >= 0 && identityIndex < len(m.form.identities) && len(m.form.identities) > 1 {
+			m.form.identities = append(m.form.identities[:identityIndex], m.form.identities[identityIndex+1:]...)
+			if identityIndex >= len(m.form.identities) {
+				identityIndex = len(m.form.identities) - 1
+			}
+			m.form.cursor = len(m.form.inputs) + identityIndex
+			m.form.focusCurrent()
+		}
+		return m, nil
 	case "tab", "shift+tab", "up", "down":
 		delta := 1
 		if msg.String() == "shift+tab" || msg.String() == "up" {
 			delta = -1
 		}
-		if m.form.cursor < len(m.form.inputs) {
-			m.form.inputs[m.form.cursor].Blur()
-		}
-		totalItems := len(m.form.inputs) + 4
+		m.form.blurAll()
+		totalItems := fieldCount + 4
 		m.form.cursor = (m.form.cursor + delta + totalItems) % totalItems
-		if m.form.cursor < len(m.form.inputs) {
-			m.form.inputs[m.form.cursor].Focus()
-		}
+		m.form.focusCurrent()
 		return m, nil
 	case " ":
-		if m.form.cursor == len(m.form.inputs) {
+		if m.form.cursor == fieldCount {
 			m.form.sendKey = !m.form.sendKey
 			return m, nil
 		}
 	case "enter":
-		if m.form.cursor < len(m.form.inputs)-1 {
-			m.form.inputs[m.form.cursor].Blur()
+		if m.form.cursor < fieldCount {
+			m.form.blurAll()
 			m.form.cursor++
-			m.form.inputs[m.form.cursor].Focus()
-			return m, nil
-		}
-		if m.form.cursor < len(m.form.inputs) {
-			m.form.inputs[m.form.cursor].Blur()
-			m.form.cursor++
+			m.form.focusCurrent()
 			return m, nil
 		}
 
@@ -633,7 +692,11 @@ func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	m.form.inputs[m.form.cursor], cmd = m.form.inputs[m.form.cursor].Update(msg)
+	if m.form.cursor < len(m.form.inputs) {
+		m.form.inputs[m.form.cursor], cmd = m.form.inputs[m.form.cursor].Update(msg)
+	} else if identityIndex := m.form.cursor - len(m.form.inputs); identityIndex >= 0 && identityIndex < len(m.form.identities) {
+		m.form.identities[identityIndex], cmd = m.form.identities[identityIndex].Update(msg)
+	}
 	return m, cmd
 }
 
@@ -682,6 +745,8 @@ func (m Model) View() string {
 		body = m.theme.Panel.Render(m.details + "\n\nEsc volta")
 	case modeConfirmRestore:
 		body = m.theme.Panel.Render("Restaurar ~/.ssh/config.zenssh.bak?\n\nIsso substitui o arquivo SSH atual.\n\ny confirma · n cancela")
+	case modeHelp:
+		body = m.renderHelp()
 	}
 
 	footer := m.renderFooter()
@@ -690,11 +755,21 @@ func (m Model) View() string {
 }
 
 func (m Model) renderImport() string {
-	rows := []string{m.theme.Accent.Render("Importar configuracao existente"), ""}
+	rows := []string{m.theme.Accent.Render("Sincronizar configuracao SSH"), m.theme.Subtle.Render("Revise o que sera trazido para o ZenSSH antes de confirmar."), ""}
 	if len(m.importer.candidates) == 0 {
 		rows = append(rows, "Nenhum alias SSH ou candidato em /etc/hosts foi encontrado.")
 	}
-	for i, candidate := range m.importer.candidates {
+	compact := m.layout.variant == layoutCompact
+	if compact {
+		rows = append(rows, m.theme.TableHeader.Render(fmt.Sprintf("   %-3s %-14s %-18s", "SEL", "ALIAS", "DESTINO")))
+	} else {
+		rows = append(rows, m.theme.TableHeader.Render(fmt.Sprintf("   %-3s %-18s %-25s %-10s", "SEL", "ALIAS", "DESTINO", "STATUS")))
+	}
+	visibleHeight := maxInt(4, m.layout.contentHeight-11)
+	start := maxInt(0, m.importer.cursor-visibleHeight+1)
+	end := minInt(len(m.importer.candidates), start+visibleHeight)
+	for i := start; i < end; i++ {
+		candidate := m.importer.candidates[i]
 		mark := "[ ]"
 		if candidate.Selected {
 			mark = "[x]"
@@ -703,69 +778,57 @@ func (m Model) renderImport() string {
 		if i == m.importer.cursor {
 			pointer = "▶ "
 		}
-		kind := "SSH"
-		if candidate.Optional {
-			kind = "/etc/hosts (opcional)"
+		line := fmt.Sprintf("%s%-3s %-18s %-25s %-10s", pointer, mark, fitText(candidate.Host.Alias, 18), fitText(candidate.Host.Address(), 25), fitText(candidate.Status, 10))
+		if compact {
+			line = fmt.Sprintf("%s%-3s %-14s %-18s", pointer, mark, fitText(candidate.Host.Alias, 14), fitText(candidate.Host.Address(), 18))
 		}
-		rows = append(rows, fmt.Sprintf("%s%s %-22s %s@%s:%d  %s · %s · %s · chave:%s", pointer, mark, candidate.Host.Alias, candidate.Host.User, candidate.Host.HostName, candidate.Host.Port, kind, candidate.Status, candidate.Host.Management, filepath.Base(candidate.Host.PrimaryIdentity())))
+		if i == m.importer.cursor {
+			line = m.theme.Selected.Render(line)
+		}
+		rows = append(rows, line)
 	}
-	rows = append(rows, "", fmt.Sprintf("Chaves privadas encontradas: %d (somente referenciadas, nunca copiadas)", len(m.importer.keys)), "", renderShortcuts(m.theme,
+	if len(m.importer.candidates) > 0 {
+		candidate := m.importer.candidates[m.importer.cursor]
+		origin := candidate.Host.Source
+		if candidate.Optional {
+			origin = "/etc/hosts (opcional)"
+		}
+		detail := fmt.Sprintf("Origem: %s · Modo: %s · Chave: %s", origin, candidate.Host.Management, filepath.Base(candidate.Host.PrimaryIdentity()))
+		rows = append(rows, "", m.theme.PanelTitle.Render("Item selecionado"), fitText(detail, maxInt(24, m.layout.contentWidth-5)))
+	}
+	rows = append(rows, "", fmt.Sprintf("%d chaves privadas encontradas; os arquivos sao apenas referenciados.", len(m.importer.keys)), "", renderShortcuts(m.theme,
 		shortcut{key: "Espaco", label: "marcar"}, shortcut{key: "a", label: "todos"}, shortcut{key: "n", label: "nenhum"}, shortcut{key: "c", label: "alternar chave"}, shortcut{key: "o", label: "gerenciado/leitura"}, shortcut{key: "Enter", label: "importar"}, shortcut{key: "Esc", label: "cancelar"},
 	))
 	return m.theme.Panel.Render(strings.Join(rows, "\n"))
 }
 
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func (m Model) renderHeader() string {
 	title := m.theme.Header.Render("ZenSSH")
-	subtitle := m.theme.Subtle.Render("Gerencie aliases SSH com uma TUI elegante, direta e funcional.")
-	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle)
+	count := fmt.Sprintf("%d hosts", len(m.visibleHosts()))
+	if m.query != "" {
+		count += fmt.Sprintf(" · filtro: %q", m.query)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Center, title, m.theme.Subtle.Render("  "+count))
 }
 
 func (m Model) renderList() string {
-	welcome := m.renderWelcome()
-	hosts := m.visibleHosts()
-
-	if len(hosts) == 0 {
-		panel := m.theme.Panel.Render("Nenhum host cadastrado.\n\nPressione a para iniciar o cadastro guiado.")
-		return lipgloss.JoinVertical(lipgloss.Left, welcome, panel)
-	}
-
-	lines := []string{}
-	for i, host := range hosts {
-		pointer := "  "
-		line := fmt.Sprintf("%s  %s  %s  %s  chave:%s  servidor:%s  [%s/%s]", badge(host.Group), host.Alias, host.Address(), portLabel(host.Port), keyStatusLabel(host), knownStatusLabel(m.knownHosts[strings.ToLower(host.Alias)]), sourceLabel(host), host.Management)
-		if i == m.cursor {
-			pointer = "▶ "
-			line = m.theme.Selected.Render(line)
-		}
-		lines = append(lines, pointer+line)
-	}
-
-	commands := renderShortcuts(
-		m.theme,
-		shortcut{key: "Enter", label: "conectar"},
-		shortcut{key: "a", label: "adicionar"},
-		shortcut{key: "i", label: "importar config"},
-		shortcut{key: "/", label: "buscar"},
-		shortcut{key: "v", label: "diagnostico"},
-		shortcut{key: "m", label: "modo"},
-		shortcut{key: "b", label: "restaurar"},
-		shortcut{key: "e", label: "editar"},
-		shortcut{key: "d", label: "remover"},
-		shortcut{key: "g", label: "gerar chave"},
-		shortcut{key: "s", label: "enviar chave"},
-		shortcut{key: "t", label: "validar chave"},
-		shortcut{key: "q", label: "sair"},
-	)
-	panel := m.theme.Panel.Render(strings.Join(lines, "\n"))
-	return lipgloss.JoinVertical(lipgloss.Left, welcome, panel, commands)
+	return m.renderDashboard()
 }
 
 func (m Model) renderForm() string {
 	rows := []string{m.theme.Accent.Render(m.form.title), ""}
-	labels := []string{"Alias", "Host/IP", "Porta", "Usuario", "Grupo", "Arquivos das chaves (separados por virgula)"}
+	labels := []string{"Alias", "Host/IP", "Porta", "Usuario", "Grupo"}
+	rows = append(rows, m.theme.PanelTitle.Render("Conexao"), "")
 
 	for i, input := range m.form.inputs {
+		input.Width = maxInt(18, minInt(42, m.layout.contentWidth-8))
 		prefix := "  "
 		if i == m.form.cursor {
 			prefix = "▶ "
@@ -773,18 +836,26 @@ func (m Model) renderForm() string {
 		rows = append(rows, fmt.Sprintf("%s%s\n%s", prefix, m.theme.InputLabel.Render(labels[i]), input.View()))
 		rows = append(rows, "")
 	}
+	rows = append(rows, m.theme.PanelTitle.Render("Identidades SSH"))
+	for i, input := range m.form.identities {
+		input.Width = maxInt(18, minInt(42, m.layout.contentWidth-8))
+		cursor := len(m.form.inputs) + i
+		rows = append(rows, fmt.Sprintf("%s%s\n%s", pointerForCursor(m.form.cursor == cursor), m.theme.InputLabel.Render(fmt.Sprintf("Chave %d", i+1)), input.View()), "")
+	}
+	rows = append(rows, m.theme.Subtle.Render("Ctrl+N adiciona · Ctrl+D remove a chave selecionada"), "", m.theme.PanelTitle.Render("Acoes"), "")
 
 	sendLine := "Nao"
 	if m.form.sendKey {
 		sendLine = "Sim"
 	}
-	rows = append(rows, fmt.Sprintf("%sEnviar chave agora\n[%s]", pointerForCursor(m.form.cursor == len(m.form.inputs)), sendLine))
+	fieldCount := m.form.fieldCount()
+	rows = append(rows, fmt.Sprintf("%sEnviar chave agora\n[%s]", pointerForCursor(m.form.cursor == fieldCount), sendLine))
 	rows = append(rows, "")
-	rows = append(rows, fmt.Sprintf("%sSalvar e sair", pointerForCursor(m.form.cursor == len(m.form.inputs)+1)))
+	rows = append(rows, fmt.Sprintf("%sSalvar e sair", pointerForCursor(m.form.cursor == fieldCount+1)))
 	rows = append(rows, "")
-	rows = append(rows, fmt.Sprintf("%sSalvar, testar e conectar", pointerForCursor(m.form.cursor == len(m.form.inputs)+2)))
+	rows = append(rows, fmt.Sprintf("%sSalvar, testar e conectar", pointerForCursor(m.form.cursor == fieldCount+2)))
 	rows = append(rows, "")
-	rows = append(rows, fmt.Sprintf("%sSalvar e adicionar outro", pointerForCursor(m.form.cursor == len(m.form.inputs)+3)))
+	rows = append(rows, fmt.Sprintf("%sSalvar e adicionar outro", pointerForCursor(m.form.cursor == fieldCount+3)))
 	rows = append(rows, "")
 	rows = append(rows, renderShortcuts(
 		m.theme,
@@ -794,7 +865,17 @@ func (m Model) renderForm() string {
 		shortcut{key: "Esc", label: "volta"},
 	))
 
-	return m.theme.Panel.Render(strings.Join(rows, "\n"))
+	content := strings.Join(rows, "\n")
+	if m.layout.contentHeight > 8 {
+		vp := viewport.New(maxInt(20, m.layout.contentWidth-4), maxInt(6, m.layout.contentHeight-2))
+		vp.SetContent(content)
+		selectedLine := 3 + m.form.cursor*3
+		if selectedLine >= vp.Height {
+			vp.SetYOffset(selectedLine - vp.Height + 3)
+		}
+		content = vp.View()
+	}
+	return m.theme.Panel.Width(maxInt(28, m.layout.contentWidth-2)).Height(maxInt(6, m.layout.contentHeight)).Render(content)
 }
 
 func (m Model) renderDelete() string {
@@ -835,7 +916,7 @@ func (m Model) renderBusy() string {
 }
 
 func (m Model) renderFooter() string {
-	return m.statusStyle.Render(m.status)
+	return lipgloss.JoinVertical(lipgloss.Left, m.statusStyle.Render(fitText(m.status, m.layout.contentWidth)), m.theme.Help.Render(m.help.View(m.keys)))
 }
 
 func (m Model) renderWelcome() string {
@@ -1029,14 +1110,13 @@ func (m *Model) deleteHost(alias string) error {
 }
 
 func newForm(host config.Host) formState {
-	inputs := make([]textinput.Model, 6)
+	inputs := make([]textinput.Model, 5)
 	placeholders := []string{
 		"app-prod",
 		"10.0.0.25 ou server.exemplo.com",
 		"22",
 		"ubuntu",
 		"producao",
-		config.DefaultIdentityFile(),
 	}
 	values := []string{
 		host.Alias,
@@ -1049,7 +1129,6 @@ func newForm(host config.Host) formState {
 		}(),
 		host.User,
 		host.Group,
-		strings.Join(host.IdentityFiles, ", "),
 	}
 
 	for i := range inputs {
@@ -1059,10 +1138,19 @@ func newForm(host config.Host) formState {
 		inputs[i].Width = 42
 	}
 	inputs[0].Focus()
+	identityValues := append([]string{}, host.IdentityFiles...)
+	if len(identityValues) == 0 {
+		identityValues = []string{""}
+	}
+	identities := make([]textinput.Model, len(identityValues))
+	for i, value := range identityValues {
+		identities[i] = newIdentityInput(value)
+	}
 
 	return formState{
 		title:      "Novo host",
 		inputs:     inputs,
+		identities: identities,
 		sshOptions: append([]string{}, host.SSHOptions...),
 		sendKey:    false,
 		cursor:     0,
@@ -1084,18 +1172,14 @@ func (f formState) host() (config.Host, error) {
 	portValue := strings.TrimSpace(f.inputs[2].Value())
 	user := strings.TrimSpace(f.inputs[3].Value())
 	group := strings.TrimSpace(f.inputs[4].Value())
-	identityValue := strings.TrimSpace(f.inputs[5].Value())
 
 	port, err := strconv.Atoi(portValue)
 	if err != nil {
 		return config.Host{}, fmt.Errorf("porta inválida")
 	}
-	if identityValue == "" {
-		identityValue = config.DefaultIdentityFile()
-	}
 	var identities []string
-	for _, identity := range strings.Split(identityValue, ",") {
-		identity = strings.TrimSpace(identity)
+	for _, input := range f.identities {
+		identity := strings.TrimSpace(input.Value())
 		if strings.HasPrefix(identity, "~/") {
 			home, _ := os.UserHomeDir()
 			identity = filepath.Join(home, strings.TrimPrefix(identity, "~/"))
@@ -1103,6 +1187,9 @@ func (f formState) host() (config.Host, error) {
 		if identity != "" {
 			identities = append(identities, identity)
 		}
+	}
+	if len(identities) == 0 {
+		identities = []string{config.DefaultIdentityFile()}
 	}
 
 	host := f.base
@@ -1366,12 +1453,45 @@ func portLabel(port int) string {
 }
 
 func selectedFormAction(form formState) formAction {
+	fieldCount := form.fieldCount()
 	switch form.cursor {
-	case len(form.inputs) + 2:
+	case fieldCount + 2:
 		return formActionSaveConnect
-	case len(form.inputs) + 3:
+	case fieldCount + 3:
 		return formActionSaveAddAnother
 	default:
 		return formActionSaveExit
+	}
+}
+
+func newIdentityInput(value string) textinput.Model {
+	input := textinput.New()
+	input.Placeholder = config.DefaultIdentityFile()
+	input.SetValue(value)
+	input.Width = 42
+	return input
+}
+
+func (f formState) fieldCount() int {
+	return len(f.inputs) + len(f.identities)
+}
+
+func (f *formState) blurAll() {
+	for i := range f.inputs {
+		f.inputs[i].Blur()
+	}
+	for i := range f.identities {
+		f.identities[i].Blur()
+	}
+}
+
+func (f *formState) focusCurrent() {
+	if f.cursor < len(f.inputs) {
+		f.inputs[f.cursor].Focus()
+		return
+	}
+	identityIndex := f.cursor - len(f.inputs)
+	if identityIndex >= 0 && identityIndex < len(f.identities) {
+		f.identities[identityIndex].Focus()
 	}
 }

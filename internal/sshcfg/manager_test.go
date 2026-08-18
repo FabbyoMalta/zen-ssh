@@ -160,3 +160,33 @@ func TestIsHostKnownUsesKnownHostsWithoutNetwork(t *testing.T) {
 		t.Fatal("unexpected known host")
 	}
 }
+
+func TestStripInformationalWarningsRemovesPostQuantumAdvisory(t *testing.T) {
+	stderr := "** WARNING: connection is not using a post-quantum key exchange algorithm.\n" +
+		"** This session may be vulnerable to \"store now, decrypt later\" attacks.\n" +
+		"** The server may need to be upgraded. See https://openssh.com/pq.html\n"
+	if got := stripInformationalWarnings(stderr); got != "" {
+		t.Fatalf("advisory was not removed: %q", got)
+	}
+}
+
+func TestStripInformationalWarningsPreservesRealSSHError(t *testing.T) {
+	stderr := "** WARNING: connection is not using a post-quantum key exchange algorithm.\n" +
+		"ssh: connect to host 10.250.0.10 port 22: Connection refused\n"
+	got := stripInformationalWarnings(stderr)
+	if !strings.Contains(got, "Connection refused") || strings.Contains(got, "post-quantum") {
+		t.Fatalf("unexpected filtered stderr: %q", got)
+	}
+}
+
+func TestSSHAuthenticatedRecognizesVerboseOpenSSHOutput(t *testing.T) {
+	stderr := "debug1: Authentication succeeded (publickey).\n" +
+		"Authenticated to 10.250.0.10 ([10.250.0.10]:22) using \"publickey\".\n" +
+		"/root/.bashrc: line 42: alias: du: not found\n"
+	if !sshAuthenticated(stderr) {
+		t.Fatal("successful authentication was not recognized")
+	}
+	if sshAuthenticated("root@10.250.0.10: Permission denied (publickey).") {
+		t.Fatal("authentication failure was recognized as success")
+	}
+}

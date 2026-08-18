@@ -26,6 +26,7 @@ func ValidateKeyAuthentication(host config.Host) error {
 		return fmt.Errorf("nenhuma chave associada ao host")
 	}
 	args := []string{
+		"-v",
 		"-o", "BatchMode=yes",
 		"-o", "PasswordAuthentication=no",
 		"-o", "KbdInteractiveAuthentication=no",
@@ -44,6 +45,9 @@ func ValidateKeyAuthentication(host config.Host) error {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		message := strings.TrimSpace(stderr.String())
+		if sshAuthenticated(message) {
+			return nil
+		}
 		if message == "" {
 			return err
 		}
@@ -416,13 +420,15 @@ func sshArgs(host config.Host, options []string) []string {
 }
 
 type sshRunOutcome struct {
-	Stderr string
+	Stderr        string
+	Authenticated bool
 }
 
 func runSSH(host config.Host, options []string, batchMode bool) (sshRunOutcome, error) {
 	args := sshArgs(host, options)
 	if batchMode {
 		args = append([]string{
+			"-v",
 			"-o", "BatchMode=yes",
 			"-o", "StrictHostKeyChecking=accept-new",
 			"-o", "ConnectTimeout=5",
@@ -445,7 +451,8 @@ func runSSH(host config.Host, options []string, batchMode bool) (sshRunOutcome, 
 	}
 
 	err := cmd.Run()
-	return sshRunOutcome{Stderr: stderr.String()}, err
+	stderrText := stderr.String()
+	return sshRunOutcome{Stderr: stderrText, Authenticated: sshAuthenticated(stderrText)}, err
 }
 
 func resolveCompatOptions(host config.Host) ([]string, error) {
@@ -453,16 +460,45 @@ func resolveCompatOptions(host config.Host) ([]string, error) {
 
 	for {
 		outcome, err := runSSH(host, options, true)
-		if err == nil || isAuthReadyError(outcome.Stderr) {
+		stderr := stripInformationalWarnings(outcome.Stderr)
+		if err == nil || outcome.Authenticated || strings.TrimSpace(stderr) == "" || isAuthReadyError(stderr) {
 			return options, nil
 		}
 
-		retryOptions := fallbackOptions(outcome.Stderr, options)
+		retryOptions := fallbackOptions(stderr, options)
 		if len(retryOptions) == len(options) {
-			return options, classifyCompatError(err, outcome.Stderr)
+			return options, classifyCompatError(err, stderr)
 		}
 		options = retryOptions
 	}
+}
+
+func sshAuthenticated(stderr string) bool {
+	for _, line := range strings.Split(strings.ToLower(stderr), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "authenticated to ") || strings.Contains(line, ": authenticated to ") {
+			return true
+		}
+	}
+	return false
+}
+
+// OpenSSH 10+ may print this advisory on stderr even when the connection is
+// usable. Keep showing it in the interactive ssh session, but ignore it while
+// deciding whether the compatibility probe succeeded.
+func stripInformationalWarnings(stderr string) string {
+	lines := strings.Split(stderr, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		lower := strings.ToLower(strings.TrimSpace(line))
+		if strings.HasPrefix(lower, "** warning: connection is not using a post-quantum key exchange algorithm") ||
+			strings.HasPrefix(lower, "** this session may be vulnerable to \"store now, decrypt later\" attacks") ||
+			strings.HasPrefix(lower, "** the server may need to be upgraded. see ") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return strings.TrimSpace(strings.Join(filtered, "\n"))
 }
 
 func fallbackOptions(stderr string, current []string) []string {
