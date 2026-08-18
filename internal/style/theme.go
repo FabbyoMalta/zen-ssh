@@ -1,40 +1,58 @@
 package style
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"os"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 type Theme struct {
-	App        lipgloss.Style
-	Panel      lipgloss.Style
-	Header     lipgloss.Style
-	Subtle     lipgloss.Style
-	Accent     lipgloss.Style
-	Highlight  lipgloss.Style
-	Key        lipgloss.Style
-	Selected   lipgloss.Style
-	Danger     lipgloss.Style
-	Success    lipgloss.Style
-	Help       lipgloss.Style
-	InputLabel lipgloss.Style
+	App         lipgloss.Style
+	Panel       lipgloss.Style
+	Header      lipgloss.Style
+	Subtle      lipgloss.Style
+	Accent      lipgloss.Style
+	Highlight   lipgloss.Style
+	Key         lipgloss.Style
+	Selected    lipgloss.Style
+	Danger      lipgloss.Style
+	Success     lipgloss.Style
+	Help        lipgloss.Style
+	InputLabel  lipgloss.Style
+	PanelTitle  lipgloss.Style
+	TableHeader lipgloss.Style
+	BadgeGood   lipgloss.Style
+	BadgeWarn   lipgloss.Style
+	BadgeBad    lipgloss.Style
+	BadgeMuted  lipgloss.Style
 }
 
 func New() Theme {
-	return Theme{
+	accent := lipgloss.AdaptiveColor{Light: "25", Dark: "81"}
+	text := lipgloss.AdaptiveColor{Light: "235", Dark: "252"}
+	muted := lipgloss.AdaptiveColor{Light: "241", Dark: "245"}
+	border := lipgloss.AdaptiveColor{Light: "250", Dark: "238"}
+	selected := lipgloss.AdaptiveColor{Light: "153", Dark: "24"}
+	_, noColor := os.LookupEnv("NO_COLOR")
+	if noColor {
+		accent, text, muted, border, selected = lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}
+	}
+	theme := Theme{
 		App: lipgloss.NewStyle().
-			Padding(1, 2),
+			Padding(1, 2).
+			Foreground(text),
 		Panel: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("63")).
-			Padding(1, 2),
+			BorderForeground(border).
+			Padding(0, 1),
 		Header: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("25")).
-			Padding(0, 1),
+			Foreground(accent),
 		Subtle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245")),
+			Foreground(muted),
 		Accent: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("81")),
+			Foreground(accent),
 		Highlight: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("228")),
 		Key: lipgloss.NewStyle().
@@ -43,8 +61,8 @@ func New() Theme {
 			Background(lipgloss.Color("31")).
 			Padding(0, 1),
 		Selected: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("62")).
+			Foreground(text).
+			Background(selected).
 			Bold(true),
 		Danger: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("203")).
@@ -55,7 +73,23 @@ func New() Theme {
 		Help: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("110")),
 		InputLabel: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("117")).
+			Foreground(accent).
 			Bold(true),
+		PanelTitle:  lipgloss.NewStyle().Bold(true).Foreground(accent),
+		TableHeader: lipgloss.NewStyle().Bold(true).Foreground(muted),
+		BadgeGood:   lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "42"}),
+		BadgeWarn:   lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "130", Dark: "214"}),
+		BadgeBad:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "160", Dark: "203"}),
+		BadgeMuted:  lipgloss.NewStyle().Foreground(muted),
 	}
+	if noColor {
+		plain := lipgloss.NewStyle()
+		bold := lipgloss.NewStyle().Bold(true)
+		theme.Header, theme.Accent, theme.Selected = bold, bold, bold
+		theme.Danger, theme.Success, theme.InputLabel = bold, bold, bold
+		theme.PanelTitle, theme.TableHeader = bold, bold
+		theme.Subtle, theme.Highlight, theme.Key, theme.Help = plain, plain, bold, plain
+		theme.BadgeGood, theme.BadgeWarn, theme.BadgeBad, theme.BadgeMuted = plain, plain, plain, plain
+	}
+	return theme
 }

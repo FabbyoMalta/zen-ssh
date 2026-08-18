@@ -1,6 +1,9 @@
 package app
 
 import (
+	"os"
+	"syscall"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"zenssh/internal/config"
@@ -21,6 +24,18 @@ func Run() error {
 	}
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err = p.Run()
-	return err
+	finalModel, err := p.Run()
+	if err != nil {
+		return err
+	}
+	result, ok := finalModel.(ui.Model)
+	if !ok || result.HandoffCommand() == nil {
+		return nil
+	}
+	cmd := result.HandoffCommand()
+	env := cmd.Env
+	if env == nil {
+		env = os.Environ()
+	}
+	return syscall.Exec(cmd.Path, cmd.Args, env)
 }

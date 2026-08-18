@@ -3,13 +3,17 @@ package ui
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"zenssh/internal/config"
 	"zenssh/internal/sshcfg"
+	"zenssh/internal/style"
 )
 
 func TestVisibleHostsFiltersAllMetadata(t *testing.T) {
@@ -19,6 +23,49 @@ func TestVisibleHostsFiltersAllMetadata(t *testing.T) {
 		if hosts := m.visibleHosts(); len(hosts) != 1 || hosts[0].Alias != "prod" {
 			t.Fatalf("query %q returned %#v", query, hosts)
 		}
+	}
+}
+
+func TestCalculateLayoutVariants(t *testing.T) {
+	tests := []struct {
+		width int
+		want  layoutVariant
+	}{{50, layoutCompact}, {80, layoutStacked}, {120, layoutSplit}}
+	for _, test := range tests {
+		if got := calculateLayout(test.width, 30).variant; got != test.want {
+			t.Errorf("width %d: got %v, want %v", test.width, got, test.want)
+		}
+	}
+}
+
+func TestDashboardRendersAtResponsiveWidths(t *testing.T) {
+	for _, width := range []int{50, 80, 120} {
+		layout := calculateLayout(width, 30)
+		h := help.New()
+		m := Model{
+			theme: style.New(), keys: newKeyMap(), help: h, layout: layout,
+			viewport:   viewport.New(layout.listWidth, layout.listHeight),
+			hosts:      []config.Host{{Alias: "production-api", HostName: "api.example.com", User: "deploy", Port: 22, IdentityFiles: []string{"/tmp/id_ed25519"}}},
+			knownHosts: map[string]bool{"production-api": true},
+		}
+		view := m.renderDashboard()
+		if !strings.Contains(view, "production-api") || !strings.Contains(view, "api.examp") {
+			t.Fatalf("width %d omitted host data: %q", width, view)
+		}
+	}
+}
+
+func TestFormSupportsMultipleIdentityInputs(t *testing.T) {
+	form := newForm(config.Host{Alias: "prod", HostName: "prod.example.com", User: "deploy", Port: 22, IdentityFiles: []string{"/tmp/key-a", "/tmp/key-b"}})
+	if len(form.identities) != 2 {
+		t.Fatalf("identities = %d", len(form.identities))
+	}
+	host, err := form.host()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(host.IdentityFiles) != 2 || host.IdentityFiles[1] != "/tmp/key-b" {
+		t.Fatalf("unexpected identities: %#v", host.IdentityFiles)
 	}
 }
 
