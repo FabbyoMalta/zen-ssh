@@ -24,6 +24,8 @@ import (
 
 type mode int
 
+const ungroupedFilter = "\x00"
+
 const (
 	modeList mode = iota
 	modeForm
@@ -34,6 +36,7 @@ const (
 	modeDetails
 	modeConfirmRestore
 	modeHelp
+	modeBulkGroup
 )
 
 type operation int
@@ -109,28 +112,32 @@ type importState struct {
 }
 
 type Model struct {
-	store       *config.Store
-	theme       style.Theme
-	hosts       []config.Host
-	cursor      int
-	width       int
-	height      int
-	mode        mode
-	form        formState
-	status      string
-	statusStyle lipgloss.Style
-	spinner     spinner.Model
-	pendingOp   operation
-	importer    importState
-	search      textinput.Model
-	query       string
-	details     string
-	knownHosts  map[string]bool
-	handoffCmd  *exec.Cmd
-	keys        keyMap
-	help        help.Model
-	viewport    viewport.Model
-	layout      layoutState
+	store         *config.Store
+	theme         style.Theme
+	hosts         []config.Host
+	cursor        int
+	width         int
+	height        int
+	mode          mode
+	form          formState
+	status        string
+	statusStyle   lipgloss.Style
+	spinner       spinner.Model
+	pendingOp     operation
+	importer      importState
+	search        textinput.Model
+	query         string
+	groupFilter   string
+	selected      map[string]bool
+	selectionMode bool
+	groupInput    textinput.Model
+	details       string
+	knownHosts    map[string]bool
+	handoffCmd    *exec.Cmd
+	keys          keyMap
+	help          help.Model
+	viewport      viewport.Model
+	layout        layoutState
 }
 
 func NewModel(store *config.Store) (Model, error) {
@@ -144,16 +151,25 @@ func NewModel(store *config.Store) (Model, error) {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))
 	h := help.New()
 	h.ShowAll = false
+	theme := style.New()
+	h.Styles.ShortKey = theme.Accent
+	h.Styles.FullKey = theme.Accent
+	h.Styles.ShortDesc = theme.Help
+	h.Styles.FullDesc = theme.Help
+	h.Styles.ShortSeparator = theme.Subtle
+	h.Styles.FullSeparator = theme.Subtle
+	h.Styles.Ellipsis = theme.Subtle
 
 	m := Model{
 		store:       store,
-		theme:       style.New(),
+		theme:       theme,
 		hosts:       hosts,
 		mode:        modeList,
 		status:      "Pronto. Use a para adicionar um host e Enter para conectar.",
 		statusStyle: style.New().Subtle,
 		spinner:     s,
 		knownHosts:  map[string]bool{},
+		selected:    map[string]bool{},
 		keys:        newKeyMap(),
 		help:        h,
 		viewport:    viewport.New(80, 12),
@@ -365,6 +381,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeList
 			}
 			return m, nil
+		case modeBulkGroup:
+			return m.updateBulkGroup(msg)
 		}
 	}
 	return m, nil
@@ -377,6 +395,59 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.mode = modeHelp
 		return m, nil
+	case "S":
+		m.selectionMode = !m.selectionMode
+		if m.selectionMode {
+			m.status = "Modo de selecao ativo. Use Espaco para marcar hosts e G para agrupá-los."
+		} else {
+			m.selected = map[string]bool{}
+			m.status = "Modo de selecao encerrado."
+		}
+		m.statusStyle = m.theme.Subtle
+	case " ":
+		if !m.selectionMode {
+			return m, nil
+		}
+		if host, ok := m.currentHost(); ok {
+			if m.selected == nil {
+				m.selected = map[string]bool{}
+			}
+			if m.selected[host.Alias] {
+				delete(m.selected, host.Alias)
+			} else {
+				m.selected[host.Alias] = true
+			}
+			m.status = fmt.Sprintf("%d host(s) selecionado(s).", len(m.selected))
+			m.statusStyle = m.theme.Subtle
+		}
+	case "x":
+		m.selected = map[string]bool{}
+		m.selectionMode = false
+		m.status = "Modo de selecao encerrado."
+		m.statusStyle = m.theme.Subtle
+	case "esc":
+		if m.selectionMode {
+			m.selected = map[string]bool{}
+			m.selectionMode = false
+			m.status = "Modo de selecao encerrado."
+			m.statusStyle = m.theme.Subtle
+		}
+	case "[":
+		m.cycleGroup(-1)
+	case "]":
+		m.cycleGroup(1)
+	case "G":
+		if !m.selectionMode || len(m.selected) == 0 {
+			m.status = "Selecione um ou mais hosts com Espaco antes de agrupar."
+			m.statusStyle = m.theme.Danger
+			return m, nil
+		}
+		m.groupInput = textinput.New()
+		m.groupInput.Placeholder = "nome do grupo; vazio remove o grupo"
+		m.groupInput.Width = maxInt(24, minInt(50, m.layout.contentWidth-8))
+		m.groupInput.Focus()
+		m.mode = modeBulkGroup
+		return m, textinput.Blink
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
@@ -576,6 +647,49 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateBulkGroup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.mode = modeList
+		m.status = "Alteracao de grupo cancelada."
+		m.statusStyle = m.theme.Subtle
+		return m, nil
+	case "enter":
+		group := strings.TrimSpace(m.groupInput.Value())
+		hosts := append([]config.Host{}, m.hosts...)
+		updated := 0
+		for i := range hosts {
+			if !m.selected[hosts[i].Alias] {
+				continue
+			}
+			hosts[i].Group = group
+			hosts[i].UpdatedAt = time.Now()
+			updated++
+		}
+		if err := sshcfg.SaveAll(m.store, hosts); err != nil {
+			m.status = fmt.Sprintf("Falha ao atualizar grupos: %v", err)
+			m.statusStyle = m.theme.Danger
+			return m, nil
+		}
+		m.hosts = hosts
+		m.selected = map[string]bool{}
+		m.selectionMode = false
+		if group == "" {
+			m.groupFilter = ungroupedFilter
+		} else {
+			m.groupFilter = group
+		}
+		m.cursor = 0
+		m.mode = modeList
+		m.status = fmt.Sprintf("%d host(s) movido(s) para %s.", updated, groupDisplayName(m.groupFilter))
+		m.statusStyle = m.theme.Success
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.groupInput, cmd = m.groupInput.Update(msg)
+	return m, cmd
+}
+
 func (m Model) updateRestore(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "enter":
@@ -747,6 +861,8 @@ func (m Model) View() string {
 		body = m.theme.Panel.Render("Restaurar ~/.ssh/config.zenssh.bak?\n\nIsso substitui o arquivo SSH atual.\n\ny confirma · n cancela")
 	case modeHelp:
 		body = m.renderHelp()
+	case modeBulkGroup:
+		body = m.renderBulkGroup()
 	}
 
 	footer := m.renderFooter()
@@ -812,6 +928,9 @@ func minInt(a, b int) int {
 func (m Model) renderHeader() string {
 	title := m.theme.Header.Render("ZenSSH")
 	count := fmt.Sprintf("%d hosts", len(m.visibleHosts()))
+	if m.groupFilter != "" {
+		count += " · grupo: " + groupDisplayName(m.groupFilter)
+	}
 	if m.query != "" {
 		count += fmt.Sprintf(" · filtro: %q", m.query)
 	}
@@ -820,6 +939,20 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderList() string {
 	return m.renderDashboard()
+}
+
+func (m Model) renderBulkGroup() string {
+	content := strings.Join([]string{
+		m.theme.PanelTitle.Render("Alterar grupo em massa"),
+		"",
+		fmt.Sprintf("%d host(s) selecionado(s)", len(m.selected)),
+		m.theme.Subtle.Render("Informe o novo grupo. Deixe vazio para remover o grupo atual."),
+		"",
+		m.groupInput.View(),
+		"",
+		renderShortcuts(m.theme, shortcut{key: "Enter", label: "aplicar"}, shortcut{key: "Esc", label: "cancelar"}),
+	}, "\n")
+	return m.theme.Panel.Width(maxInt(30, minInt(64, m.layout.contentWidth-2))).Render(content)
 }
 
 func (m Model) renderForm() string {
@@ -990,17 +1123,73 @@ func (m *Model) currentHost() (config.Host, bool) {
 
 func (m Model) visibleHosts() []config.Host {
 	query := strings.ToLower(strings.TrimSpace(m.query))
-	if query == "" {
-		return m.hosts
-	}
 	result := make([]config.Host, 0, len(m.hosts))
 	for _, host := range m.hosts {
+		if m.groupFilter == ungroupedFilter && strings.TrimSpace(host.Group) != "" {
+			continue
+		}
+		if m.groupFilter != "" && m.groupFilter != ungroupedFilter && !strings.EqualFold(host.Group, m.groupFilter) {
+			continue
+		}
 		haystack := strings.ToLower(strings.Join([]string{host.Alias, host.HostName, host.User, host.Group, host.Source, host.SourcePath}, " "))
-		if strings.Contains(haystack, query) {
+		if query == "" || strings.Contains(haystack, query) {
 			result = append(result, host)
 		}
 	}
 	return result
+}
+
+func (m Model) groupTabs() []string {
+	tabs := []string{""}
+	seen := map[string]bool{}
+	hasUngrouped := false
+	groups := []string{}
+	for _, host := range m.hosts {
+		group := strings.TrimSpace(host.Group)
+		if group == "" {
+			hasUngrouped = true
+			continue
+		}
+		key := strings.ToLower(group)
+		if !seen[key] {
+			seen[key] = true
+			groups = append(groups, group)
+		}
+	}
+	slices.SortFunc(groups, func(a, b string) int {
+		return strings.Compare(strings.ToLower(a), strings.ToLower(b))
+	})
+	tabs = append(tabs, groups...)
+	if hasUngrouped {
+		tabs = append(tabs, ungroupedFilter)
+	}
+	return tabs
+}
+
+func (m *Model) cycleGroup(delta int) {
+	tabs := m.groupTabs()
+	current := 0
+	for i, group := range tabs {
+		if group == m.groupFilter {
+			current = i
+			break
+		}
+	}
+	m.groupFilter = tabs[(current+delta+len(tabs))%len(tabs)]
+	m.cursor = 0
+	m.status = "Filtro de grupo: " + groupDisplayName(m.groupFilter)
+	m.statusStyle = m.theme.Subtle
+}
+
+func groupDisplayName(group string) string {
+	switch group {
+	case "":
+		return "Todos"
+	case ungroupedFilter:
+		return "Sem grupo"
+	default:
+		return group
+	}
 }
 
 func sourceLabel(host config.Host) string {
@@ -1081,6 +1270,10 @@ func (m *Model) saveHost(host config.Host) error {
 		return err
 	}
 	m.hosts = hosts
+	if m.form.original != "" && m.selected[m.form.original] {
+		delete(m.selected, m.form.original)
+		m.selected[host.Alias] = true
+	}
 	if m.query == "" {
 		m.cursor = indexOfAlias(hosts, host.Alias)
 	} else {
@@ -1105,6 +1298,7 @@ func (m *Model) deleteHost(alias string) error {
 		return err
 	}
 	m.hosts = hosts
+	delete(m.selected, alias)
 	m.syncCursor()
 	return nil
 }

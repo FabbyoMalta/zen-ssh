@@ -19,7 +19,7 @@ func (m Model) renderDashboard() string {
 			message = "Nenhum host corresponde ao filtro"
 		}
 		return m.theme.Panel.Width(maxInt(28, m.layout.contentWidth-2)).Render(
-			m.theme.PanelTitle.Render(message) + "\n\n" +
+			m.renderGroupTabs() + "\n\n" + m.theme.PanelTitle.Render(message) + "\n\n" +
 				m.theme.Subtle.Render("Use a para adicionar ou i para importar sua configuracao SSH."),
 		)
 	}
@@ -39,27 +39,37 @@ func (m Model) renderDashboard() string {
 func (m Model) renderHostList(hosts []config.Host) string {
 	innerWidth := maxInt(18, m.layout.listWidth-4)
 	aliasWidth := 16
-	destinationWidth := maxInt(12, innerWidth-aliasWidth-21)
+	destinationWidth := maxInt(12, innerWidth-aliasWidth-25)
 	if m.layout.variant == layoutCompact {
-		aliasWidth = maxInt(10, innerWidth/3)
-		destinationWidth = maxInt(10, innerWidth-aliasWidth-11)
+		aliasWidth = maxInt(8, innerWidth/3)
+		destinationWidth = maxInt(6, innerWidth-aliasWidth-14)
 	}
 
 	lines := make([]string, 0, len(hosts)+2)
 	if m.layout.variant == layoutCompact {
-		lines = append(lines, m.theme.TableHeader.Render(fmt.Sprintf("  %-*s %-*s %s", aliasWidth, "HOST", destinationWidth, "DESTINO", "CHAVE")))
+		lines = append(lines, m.theme.TableHeader.Render(fmt.Sprintf("      %-*s %-*s %s", aliasWidth, "HOST", destinationWidth, "DESTINO", "CHAVE")))
 	} else {
-		lines = append(lines, m.theme.TableHeader.Render(fmt.Sprintf("  %-*s %-*s %-8s %-8s", aliasWidth, "HOST", destinationWidth, "DESTINO", "CHAVE", "ORIGEM")))
+		lines = append(lines, m.theme.TableHeader.Render(fmt.Sprintf("      %-*s %-*s %-8s %-8s", aliasWidth, "HOST", destinationWidth, "DESTINO", "CHAVE", "ORIGEM")))
 	}
 	for i, host := range hosts {
 		alias := fitText(host.Alias, aliasWidth)
 		destination := fitText(host.Address(), destinationWidth)
 		key := compactKeyStatus(host)
 		var line string
-		if m.layout.variant == layoutCompact {
-			line = fmt.Sprintf("  %-*s %-*s %-8s", aliasWidth, alias, destinationWidth, destination, key)
+		if m.selectionMode {
+			mark := "[ ]"
+			if m.selected[host.Alias] {
+				mark = "[x]"
+			}
+			if m.layout.variant == layoutCompact {
+				line = fmt.Sprintf("  %s %-*s %-*s %-6s", mark, aliasWidth, alias, destinationWidth, destination, fitText(key, 6))
+			} else {
+				line = fmt.Sprintf("  %s %-*s %-*s %-8s %-8s", mark, aliasWidth, alias, destinationWidth, destination, key, fitText(sourceLabel(host), 8))
+			}
+		} else if m.layout.variant == layoutCompact {
+			line = fmt.Sprintf("      %-*s %-*s %-6s", aliasWidth, alias, destinationWidth, destination, fitText(key, 6))
 		} else {
-			line = fmt.Sprintf("  %-*s %-*s %-8s %-8s", aliasWidth, alias, destinationWidth, destination, key, fitText(sourceLabel(host), 8))
+			line = fmt.Sprintf("      %-*s %-*s %-8s %-8s", aliasWidth, alias, destinationWidth, destination, key, fitText(sourceLabel(host), 8))
 		}
 		if i == m.cursor {
 			line = m.theme.Selected.Width(innerWidth).Render("›" + line[1:])
@@ -69,7 +79,7 @@ func (m Model) renderHostList(hosts []config.Host) string {
 
 	vp := m.viewport
 	vp.Width = innerWidth
-	vp.Height = maxInt(3, m.layout.listHeight-3)
+	vp.Height = maxInt(3, m.layout.listHeight-4)
 	vp.SetContent(strings.Join(lines, "\n"))
 	selectedLine := m.cursor + 1
 	if selectedLine < vp.YOffset {
@@ -78,9 +88,36 @@ func (m Model) renderHostList(hosts []config.Host) string {
 		vp.SetYOffset(selectedLine - vp.Height + 1)
 	}
 	title := m.theme.PanelTitle.Render("Hosts")
+	if m.selectionMode {
+		title += m.theme.Subtle.Render(fmt.Sprintf(" · %d selecionados", len(m.selected)))
+	}
 	position := m.theme.Subtle.Render(fmt.Sprintf("%d/%d", m.cursor+1, len(hosts)))
 	heading := lipgloss.JoinHorizontal(lipgloss.Center, title, strings.Repeat(" ", maxInt(1, innerWidth-lipgloss.Width(title)-lipgloss.Width(position))), position)
-	return m.theme.Panel.Width(m.layout.listWidth - 2).Height(maxInt(4, m.layout.listHeight-2)).Render(heading + "\n" + vp.View())
+	return m.theme.Panel.Width(m.layout.listWidth - 2).Height(maxInt(4, m.layout.listHeight-2)).Render(m.renderGroupTabs() + "\n" + heading + "\n" + vp.View())
+}
+
+func (m Model) renderGroupTabs() string {
+	tabs := m.groupTabs()
+	current := 0
+	for i, group := range tabs {
+		if group == m.groupFilter {
+			current = i
+			break
+		}
+	}
+	start := maxInt(0, current-1)
+	end := minInt(len(tabs), start+3)
+	start = maxInt(0, end-3)
+	parts := make([]string, 0, end-start)
+	for _, group := range tabs[start:end] {
+		label := groupDisplayName(group)
+		if group == m.groupFilter {
+			parts = append(parts, m.theme.Selected.Render(" "+label+" "))
+		} else {
+			parts = append(parts, m.theme.Subtle.Render(" "+label+" "))
+		}
+	}
+	return "‹ [  " + strings.Join(parts, "  ") + "  ] ›"
 }
 
 func (m Model) renderHostDetail(host config.Host) string {
