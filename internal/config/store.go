@@ -23,6 +23,7 @@ type Host struct {
 	IdentityFile        string    `json:"identity_file,omitempty"` // campo legado; removido na proxima gravacao
 	IdentityFiles       []string  `json:"identity_files,omitempty"`
 	SSHOptions          []string  `json:"ssh_options,omitempty"`
+	TermType            string    `json:"term_type,omitempty"`
 	Source              string    `json:"source,omitempty"`
 	SourcePath          string    `json:"source_path,omitempty"`
 	Management          string    `json:"management,omitempty"`
@@ -52,6 +53,11 @@ const (
 	KeyAuthFailed    = "failed"
 )
 
+const (
+	TermSystem = "system"
+	TermXterm  = "xterm"
+)
+
 func (h Host) PrimaryIdentity() string {
 	if len(h.IdentityFiles) > 0 {
 		return h.IdentityFiles[0]
@@ -73,6 +79,9 @@ func (h *Host) Normalize() {
 	}
 	if h.KeyAuthStatus == "" {
 		h.KeyAuthStatus = KeyAuthUnknown
+	}
+	if h.TermType == "" {
+		h.TermType = TermSystem
 	}
 }
 
@@ -223,6 +232,9 @@ func ValidateHost(h Host) error {
 	}
 	if h.KeyAuthStatus != "" && h.KeyAuthStatus != KeyAuthUnknown && h.KeyAuthStatus != KeyAuthValidated && h.KeyAuthStatus != KeyAuthFailed {
 		return errors.New("estado de autenticacao por chave invalido")
+	}
+	if h.TermType != "" && h.TermType != TermSystem && h.TermType != TermXterm {
+		return errors.New("tipo de terminal invalido")
 	}
 	for _, option := range h.SSHOptions {
 		if strings.ContainsAny(option, "\r\n") {

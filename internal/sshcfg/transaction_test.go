@@ -60,6 +60,14 @@ func TestImportCandidatesAddsUpdatesAndRemoves(t *testing.T) {
 	if result.Imported != 1 {
 		t.Fatalf("unexpected add result: %#v", result)
 	}
+	stored, err := store.LoadHosts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored[0].TermType = config.TermXterm
+	if err := SaveAll(store, stored); err != nil {
+		t.Fatal(err)
+	}
 	host.HostName = "new"
 	host.SourceFingerprint = config.HostFingerprint(host)
 	result, err = ImportCandidates(store, []Candidate{{Host: host, Selected: true, Status: "alterado"}})
@@ -68,6 +76,10 @@ func TestImportCandidatesAddsUpdatesAndRemoves(t *testing.T) {
 	}
 	if result.Updated != 1 {
 		t.Fatalf("unexpected update result: %#v", result)
+	}
+	stored, err = store.LoadHosts()
+	if err != nil || stored[0].TermType != config.TermXterm {
+		t.Fatalf("local terminal type was not preserved: %#v, %v", stored, err)
 	}
 	result, err = ImportCandidates(store, []Candidate{{Host: host, Selected: true, Status: "removido na origem", Remove: true}})
 	if err != nil {

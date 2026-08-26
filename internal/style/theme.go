@@ -32,10 +32,11 @@ func New() Theme {
 	text := lipgloss.AdaptiveColor{Light: "235", Dark: "252"}
 	muted := lipgloss.AdaptiveColor{Light: "238", Dark: "250"}
 	border := lipgloss.AdaptiveColor{Light: "250", Dark: "238"}
-	selected := lipgloss.AdaptiveColor{Light: "153", Dark: "24"}
+	selected := lipgloss.AdaptiveColor{Light: "25", Dark: "25"}
+	selectedText := lipgloss.AdaptiveColor{Light: "231", Dark: "231"}
 	_, noColor := os.LookupEnv("NO_COLOR")
 	if noColor {
-		accent, text, muted, border, selected = lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}
+		accent, text, muted, border, selected, selectedText = lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}, lipgloss.AdaptiveColor{}
 	}
 	theme := Theme{
 		App: lipgloss.NewStyle().
@@ -61,7 +62,7 @@ func New() Theme {
 			Background(lipgloss.Color("31")).
 			Padding(0, 1),
 		Selected: lipgloss.NewStyle().
-			Foreground(text).
+			Foreground(selectedText).
 			Background(selected).
 			Bold(true),
 		Danger: lipgloss.NewStyle().

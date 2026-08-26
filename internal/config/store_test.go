@@ -54,11 +54,21 @@ func TestLoadMigratesLegacyIdentityFile(t *testing.T) {
 	if len(hosts[0].IdentityFiles) != 1 || hosts[0].IdentityFiles[0] != "/tmp/legacy" || hosts[0].IdentityFile != "" {
 		t.Fatalf("migration failed: %#v", hosts[0])
 	}
+	if hosts[0].TermType != TermSystem {
+		t.Fatalf("legacy terminal type = %q, want %q", hosts[0].TermType, TermSystem)
+	}
 	if err := store.SaveHosts(hosts); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(store.hostsFile)
 	if strings.Contains(string(data), "identity_file\"") {
 		t.Fatalf("legacy field persisted: %s", data)
+	}
+}
+
+func TestValidateHostRejectsInvalidTermType(t *testing.T) {
+	host := Host{Alias: "prod", HostName: "server", Port: 22, User: "deploy", TermType: "unknown"}
+	if err := ValidateHost(host); err == nil {
+		t.Fatal("expected invalid terminal type to be rejected")
 	}
 }

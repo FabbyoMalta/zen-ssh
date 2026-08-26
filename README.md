@@ -160,6 +160,7 @@ O formulário permite definir:
 - usuário;
 - grupo;
 - uma ou mais identidades SSH.
+- o tipo de terminal enviado ao host remoto (`Padrão do sistema` ou `xterm`).
 
 Controles adicionais do formulário:
 
@@ -168,9 +169,11 @@ Controles adicionais do formulário:
 | `Tab` / `Shift+Tab` | Navegar entre os campos e ações |
 | `Ctrl+N` | Adicionar outro arquivo de identidade |
 | `Ctrl+D` | Remover o arquivo de identidade selecionado |
-| `Espaço` | Alternar o envio da chave após salvar |
+| `Espaço` | Alternar a opção selecionada (TERM remoto ou envio da chave) |
 | `Enter` | Executar a ação selecionada |
 | `Esc` | Cancelar o cadastro |
+
+Se o Backspace ou outras teclas forem interpretados incorretamente em um host específico, edite esse host e altere **TERM remoto** para `xterm`. O ZenSSH inicia o OpenSSH com `TERM=xterm`, que é encaminhado automaticamente ao PTY remoto. Hosts existentes permanecem em `Padrão do sistema` até serem configurados.
 
 ## Modos de gerenciamento
 

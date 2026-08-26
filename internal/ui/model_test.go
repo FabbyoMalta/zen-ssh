@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"zenssh/internal/config"
 	"zenssh/internal/sshcfg"
@@ -139,6 +140,50 @@ func TestDashboardRendersAtResponsiveWidths(t *testing.T) {
 	}
 }
 
+func TestDashboardClampsStaleCursor(t *testing.T) {
+	layout := calculateLayout(120, 30)
+	m := Model{
+		theme: style.New(), layout: layout, viewport: viewport.New(layout.listWidth, layout.listHeight),
+		hosts: []config.Host{
+			{Alias: "one", HostName: "one.local", User: "root", Port: 22},
+			{Alias: "two", HostName: "two.local", User: "root", Port: 22},
+		},
+		cursor: 45, knownHosts: map[string]bool{},
+	}
+
+	view := m.renderDashboard()
+	if !strings.Contains(view, "two.local") {
+		t.Fatalf("dashboard did not render the last visible host: %q", view)
+	}
+}
+
+func TestSaveHostSetsCursorWithinFilteredHosts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store, err := config.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	hosts := []config.Host{
+		{Alias: "group-first", HostName: "one.local", User: "root", Port: 22, Group: "infra", Management: config.ManagementManual},
+		{Alias: "other", HostName: "other.local", User: "root", Port: 22, Group: "dev", Management: config.ManagementManual},
+		{Alias: "group-second", HostName: "two.local", User: "root", Port: 22, Group: "infra", Management: config.ManagementManual},
+	}
+	target := hosts[2]
+	if err := sshcfg.SaveAll(store, hosts); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{store: store, hosts: hosts, groupFilter: "infra", form: formState{original: "group-second"}}
+	if err := m.saveHost(target); err != nil {
+		t.Fatal(err)
+	}
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want index 1 in filtered hosts: %#v", m.cursor, m.visibleHosts())
+	}
+}
+
 func TestFormSupportsMultipleIdentityInputs(t *testing.T) {
 	form := newForm(config.Host{Alias: "prod", HostName: "prod.example.com", User: "deploy", Port: 22, IdentityFiles: []string{"/tmp/key-a", "/tmp/key-b"}})
 	if len(form.identities) != 2 {
@@ -150,6 +195,21 @@ func TestFormSupportsMultipleIdentityInputs(t *testing.T) {
 	}
 	if len(host.IdentityFiles) != 2 || host.IdentityFiles[1] != "/tmp/key-b" {
 		t.Fatalf("unexpected identities: %#v", host.IdentityFiles)
+	}
+}
+
+func TestFormUsesCompactStepAtLowTerminalHeight(t *testing.T) {
+	form := newForm(config.Host{})
+	form.cursor = form.fieldCount() + 4
+	layout := calculateLayout(50, 15)
+	m := Model{theme: style.New(), layout: layout, form: form}
+
+	view := m.renderForm()
+	if !strings.Contains(view, "Salvar e adicionar outro") {
+		t.Fatalf("selected form action was clipped: %q", view)
+	}
+	if got := lipgloss.Height(view); got > layout.contentHeight {
+		t.Fatalf("compact form height = %d, available = %d", got, layout.contentHeight)
 	}
 }
 
@@ -183,6 +243,29 @@ func TestFirstRunStartsInReviewWithoutWritingSSHConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(home + "/.ssh/config"); !os.IsNotExist(err) {
 		t.Fatalf("SSH config was touched: %v", err)
+	}
+}
+
+func TestTermTypeCyclesInBothDirections(t *testing.T) {
+	if got := nextTermType("", 1); got != config.TermXterm {
+		t.Fatalf("next mode = %q", got)
+	}
+	if got := nextTermType(config.TermSystem, -1); got != config.TermXterm {
+		t.Fatalf("previous mode = %q", got)
+	}
+}
+
+func TestFormPersistsTermType(t *testing.T) {
+	form := newForm(config.Host{TermType: config.TermXterm})
+	form.inputs[0].SetValue("prod")
+	form.inputs[1].SetValue("server")
+	form.inputs[3].SetValue("deploy")
+	host, err := form.host()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host.TermType != config.TermXterm {
+		t.Fatalf("terminal type = %q", host.TermType)
 	}
 }
 

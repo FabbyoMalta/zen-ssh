@@ -99,6 +99,7 @@ type formState struct {
 	inputs     []textinput.Model
 	identities []textinput.Model
 	sshOptions []string
+	termType   string
 	sendKey    bool
 	cursor     int
 	base       config.Host
@@ -112,32 +113,33 @@ type importState struct {
 }
 
 type Model struct {
-	store         *config.Store
-	theme         style.Theme
-	hosts         []config.Host
-	cursor        int
-	width         int
-	height        int
-	mode          mode
-	form          formState
-	status        string
-	statusStyle   lipgloss.Style
-	spinner       spinner.Model
-	pendingOp     operation
-	importer      importState
-	search        textinput.Model
-	query         string
-	groupFilter   string
-	selected      map[string]bool
-	selectionMode bool
-	groupInput    textinput.Model
-	details       string
-	knownHosts    map[string]bool
-	handoffCmd    *exec.Cmd
-	keys          keyMap
-	help          help.Model
-	viewport      viewport.Model
-	layout        layoutState
+	store           *config.Store
+	theme           style.Theme
+	hosts           []config.Host
+	cursor          int
+	width           int
+	height          int
+	mode            mode
+	form            formState
+	status          string
+	statusStyle     lipgloss.Style
+	spinner         spinner.Model
+	pendingOp       operation
+	importer        importState
+	search          textinput.Model
+	query           string
+	groupFilter     string
+	selected        map[string]bool
+	selectionMode   bool
+	groupInput      textinput.Model
+	details         string
+	knownHosts      map[string]bool
+	handoffCmd      *exec.Cmd
+	handoffTermType string
+	keys            keyMap
+	help            help.Model
+	viewport        viewport.Model
+	layout          layoutState
 }
 
 func NewModel(store *config.Store) (Model, error) {
@@ -260,6 +262,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.handoffCmd = msg.cmd
+			m.handoffTermType = msg.host.TermType
 			return m, tea.Quit
 		}
 		return m, tea.ExecProcess(msg.cmd, func(err error) tea.Msg {
@@ -318,6 +321,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.pendingOp = opConnect
 				m.handoffCmd = cmd
+				m.handoffTermType = msg.host.TermType
 				return m, tea.Quit
 			}
 
@@ -541,16 +545,22 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.pendingOp = opConnect
 			m.handoffCmd = cmd
+			m.handoffTermType = updatedHost.TermType
 			return m, tea.Quit
 		}
 	}
 	return m, nil
 }
 
-// HandoffCommand returns the command that should replace ZenSSH after Bubble
-// Tea has restored the terminal. A nil command means the user only quit.
+// HandoffCommand returns the command that should take over the terminal after
+// Bubble Tea has restored it. A nil command means the user only quit.
 func (m Model) HandoffCommand() *exec.Cmd {
 	return m.handoffCmd
+}
+
+// HandoffTermType returns the TERM value to apply before SSH starts.
+func (m Model) HandoffTermType() string {
+	return m.handoffTermType
 }
 
 func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -740,13 +750,26 @@ func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			delta = -1
 		}
 		m.form.blurAll()
-		totalItems := fieldCount + 4
+		totalItems := fieldCount + 5
 		m.form.cursor = (m.form.cursor + delta + totalItems) % totalItems
 		m.form.focusCurrent()
 		return m, nil
 	case " ":
 		if m.form.cursor == fieldCount {
+			m.form.termType = nextTermType(m.form.termType, 1)
+			return m, nil
+		}
+		if m.form.cursor == fieldCount+1 {
 			m.form.sendKey = !m.form.sendKey
+			return m, nil
+		}
+	case "left", "right":
+		if m.form.cursor == fieldCount {
+			delta := 1
+			if msg.String() == "left" {
+				delta = -1
+			}
+			m.form.termType = nextTermType(m.form.termType, delta)
 			return m, nil
 		}
 	case "enter":
@@ -754,6 +777,14 @@ func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.form.blurAll()
 			m.form.cursor++
 			m.form.focusCurrent()
+			return m, nil
+		}
+		if m.form.cursor == fieldCount {
+			m.form.termType = nextTermType(m.form.termType, 1)
+			return m, nil
+		}
+		if m.form.cursor == fieldCount+1 {
+			m.form.sendKey = !m.form.sendKey
 			return m, nil
 		}
 
@@ -956,59 +987,78 @@ func (m Model) renderBulkGroup() string {
 }
 
 func (m Model) renderForm() string {
-	rows := []string{m.theme.Accent.Render(m.form.title), ""}
-	labels := []string{"Alias", "Host/IP", "Porta", "Usuario", "Grupo"}
-	rows = append(rows, m.theme.PanelTitle.Render("Conexao"), "")
-
-	for i, input := range m.form.inputs {
-		input.Width = maxInt(18, minInt(42, m.layout.contentWidth-8))
-		prefix := "  "
-		if i == m.form.cursor {
-			prefix = "▶ "
-		}
-		rows = append(rows, fmt.Sprintf("%s%s\n%s", prefix, m.theme.InputLabel.Render(labels[i]), input.View()))
-		rows = append(rows, "")
-	}
-	rows = append(rows, m.theme.PanelTitle.Render("Identidades SSH"))
-	for i, input := range m.form.identities {
-		input.Width = maxInt(18, minInt(42, m.layout.contentWidth-8))
-		cursor := len(m.form.inputs) + i
-		rows = append(rows, fmt.Sprintf("%s%s\n%s", pointerForCursor(m.form.cursor == cursor), m.theme.InputLabel.Render(fmt.Sprintf("Chave %d", i+1)), input.View()), "")
-	}
-	rows = append(rows, m.theme.Subtle.Render("Ctrl+N adiciona · Ctrl+D remove a chave selecionada"), "", m.theme.PanelTitle.Render("Acoes"), "")
-
-	sendLine := "Nao"
-	if m.form.sendKey {
-		sendLine = "Sim"
-	}
 	fieldCount := m.form.fieldCount()
-	rows = append(rows, fmt.Sprintf("%sEnviar chave agora\n[%s]", pointerForCursor(m.form.cursor == fieldCount), sendLine))
-	rows = append(rows, "")
-	rows = append(rows, fmt.Sprintf("%sSalvar e sair", pointerForCursor(m.form.cursor == fieldCount+1)))
-	rows = append(rows, "")
-	rows = append(rows, fmt.Sprintf("%sSalvar, testar e conectar", pointerForCursor(m.form.cursor == fieldCount+2)))
-	rows = append(rows, "")
-	rows = append(rows, fmt.Sprintf("%sSalvar e adicionar outro", pointerForCursor(m.form.cursor == fieldCount+3)))
-	rows = append(rows, "")
-	rows = append(rows, renderShortcuts(
-		m.theme,
-		shortcut{key: "Tab", label: "navega"},
-		shortcut{key: "Espaco", label: "alterna envio da chave"},
-		shortcut{key: "Enter", label: "executa acao"},
-		shortcut{key: "Esc", label: "volta"},
-	))
+	totalItems := fieldCount + 5
+	step := minInt(maxInt(m.form.cursor, 0), totalItems-1)
+	compact := m.layout.contentHeight < 14
+	rows := []string{lipgloss.JoinHorizontal(lipgloss.Center,
+		m.theme.Accent.Render(m.form.title),
+		m.theme.Subtle.Render(fmt.Sprintf("  ·  %d/%d", step+1, totalItems)),
+	), ""}
+	inputWidth := maxInt(18, minInt(52, m.layout.contentWidth-8))
+	labels := []string{"Alias", "Host/IP", "Porta", "Usuario", "Grupo"}
 
-	content := strings.Join(rows, "\n")
-	if m.layout.contentHeight > 8 {
-		vp := viewport.New(maxInt(20, m.layout.contentWidth-4), maxInt(6, m.layout.contentHeight-2))
-		vp.SetContent(content)
-		selectedLine := 3 + m.form.cursor*3
-		if selectedLine >= vp.Height {
-			vp.SetYOffset(selectedLine - vp.Height + 3)
+	switch {
+	case step < len(m.form.inputs):
+		input := m.form.inputs[step]
+		input.Width = inputWidth
+		if !compact {
+			rows = append(rows, m.theme.PanelTitle.Render("Conexao"), "")
 		}
-		content = vp.View()
+		rows = append(rows, m.theme.InputLabel.Render(labels[step]), input.View())
+	case step < fieldCount:
+		identityIndex := step - len(m.form.inputs)
+		input := m.form.identities[identityIndex]
+		input.Width = inputWidth
+		if !compact {
+			rows = append(rows, m.theme.PanelTitle.Render("Identidade SSH"), "")
+		}
+		rows = append(rows, m.theme.InputLabel.Render(fmt.Sprintf("Chave %d", identityIndex+1)), input.View())
+		if !compact {
+			rows = append(rows, "", m.theme.Subtle.Render("Ctrl+N adiciona outra chave · Ctrl+D remove esta chave"))
+		}
+	case step == fieldCount:
+		if !compact {
+			rows = append(rows, m.theme.PanelTitle.Render("Terminal remoto"), "")
+		}
+		rows = append(rows, fmt.Sprintf("TERM: [%s]", termTypeLabel(m.form.termType)))
+		if !compact {
+			rows = append(rows, "", m.theme.Subtle.Render("Use ←/→, Espaco ou Enter para alterar."))
+		}
+	case step == fieldCount+1:
+		value := "Nao"
+		if m.form.sendKey {
+			value = "Sim"
+		}
+		if !compact {
+			rows = append(rows, m.theme.PanelTitle.Render("Autenticacao"), "")
+		}
+		rows = append(rows, fmt.Sprintf("Enviar chave agora: [%s]", value))
+		if !compact {
+			rows = append(rows, "", m.theme.Subtle.Render("Use Espaco ou Enter para alterar."))
+		}
+	default:
+		action := "Salvar e sair"
+		if step == fieldCount+3 {
+			action = "Salvar, testar e conectar"
+		} else if step == fieldCount+4 {
+			action = "Salvar e adicionar outro"
+		}
+		if !compact {
+			rows = append(rows, m.theme.PanelTitle.Render("Concluir"), "")
+		}
+		rows = append(rows, m.theme.Selected.Render("  "+action+"  "))
+		if !compact {
+			rows = append(rows, "", m.theme.Subtle.Render("Pressione Enter para executar esta acao."))
+		}
 	}
-	return m.theme.Panel.Width(maxInt(28, m.layout.contentWidth-2)).Height(maxInt(6, m.layout.contentHeight)).Render(content)
+
+	shortcuts := []shortcut{{key: "Tab", label: "proxima"}, {key: "Esc", label: "cancelar"}}
+	if !compact {
+		shortcuts = []shortcut{{key: "Tab", label: "proxima"}, {key: "Shift+Tab", label: "anterior"}, {key: "Esc", label: "cancelar"}}
+	}
+	rows = append(rows, "", renderShortcuts(m.theme, shortcuts...))
+	return m.theme.Panel.Width(maxInt(28, m.layout.contentWidth-2)).Render(strings.Join(rows, "\n"))
 }
 
 func (m Model) renderDelete() string {
@@ -1219,7 +1269,7 @@ func diagnosticSummary(host config.Host) string {
 	if !host.KeyAuthCheckedAt.IsZero() {
 		lastCheck = host.KeyAuthCheckedAt.Format("2006-01-02 15:04:05")
 	}
-	return fmt.Sprintf("Diagnostico de %s\n\nDestino: %s@%s:%d\nOrigem: %s\nArquivo: %s\nModo: %s\nIdentidades: %s\nAutenticacao por chave: %s\nUltimo teste: %s\nOpcoes efetivas: %s\n\nComando equivalente:\nssh -p %d %s@%s", host.Alias, host.User, host.HostName, host.Port, sourceLabel(host), host.SourcePath, host.Management, identities, keyStatusLabel(host), lastCheck, strings.Join(optionNames, ", "), host.Port, host.User, host.HostName)
+	return fmt.Sprintf("Diagnostico de %s\n\nDestino: %s@%s:%d\nOrigem: %s\nArquivo: %s\nModo: %s\nIdentidades: %s\nTERM remoto: %s\nAutenticacao por chave: %s\nUltimo teste: %s\nOpcoes efetivas: %s\n\nComando equivalente:\nssh -p %d %s@%s", host.Alias, host.User, host.HostName, host.Port, sourceLabel(host), host.SourcePath, host.Management, identities, termTypeLabel(host.TermType), keyStatusLabel(host), lastCheck, strings.Join(optionNames, ", "), host.Port, host.User, host.HostName)
 }
 
 func (m *Model) refreshKnownHosts() {
@@ -1278,8 +1328,9 @@ func (m *Model) saveHost(host config.Host) error {
 		delete(m.selected, m.form.original)
 		m.selected[host.Alias] = true
 	}
-	if m.query == "" {
-		m.cursor = indexOfAlias(hosts, host.Alias)
+	visibleHosts := m.visibleHosts()
+	if index := indexOfAlias(visibleHosts, host.Alias); index >= 0 {
+		m.cursor = index
 	} else {
 		m.cursor = 0
 	}
@@ -1350,6 +1401,7 @@ func newForm(host config.Host) formState {
 		inputs:     inputs,
 		identities: identities,
 		sshOptions: append([]string{}, host.SSHOptions...),
+		termType:   host.TermType,
 		sendKey:    false,
 		cursor:     0,
 		base:       host,
@@ -1399,6 +1451,7 @@ func (f formState) host() (config.Host, error) {
 	host.IdentityFiles = identities
 	host.IdentityFile = ""
 	host.SSHOptions = append([]string{}, f.sshOptions...)
+	host.TermType = normalizedTermType(f.termType)
 	if host.Management == "" {
 		host.Management = config.ManagementManual
 	}
@@ -1626,7 +1679,7 @@ func indexOfAlias(hosts []config.Host, alias string) int {
 			return i
 		}
 	}
-	return 0
+	return -1
 }
 
 func pointerForCursor(selected bool) string {
@@ -1653,12 +1706,41 @@ func portLabel(port int) string {
 func selectedFormAction(form formState) formAction {
 	fieldCount := form.fieldCount()
 	switch form.cursor {
-	case fieldCount + 2:
-		return formActionSaveConnect
 	case fieldCount + 3:
+		return formActionSaveConnect
+	case fieldCount + 4:
 		return formActionSaveAddAnother
 	default:
 		return formActionSaveExit
+	}
+}
+
+func normalizedTermType(mode string) string {
+	if mode == "" {
+		return config.TermSystem
+	}
+	return mode
+}
+
+func nextTermType(mode string, delta int) string {
+	modes := []string{config.TermSystem, config.TermXterm}
+	mode = normalizedTermType(mode)
+	index := 0
+	for i := range modes {
+		if modes[i] == mode {
+			index = i
+			break
+		}
+	}
+	return modes[(index+delta+len(modes))%len(modes)]
+}
+
+func termTypeLabel(mode string) string {
+	switch normalizedTermType(mode) {
+	case config.TermXterm:
+		return "xterm"
+	default:
+		return "Padrao do sistema"
 	}
 }
 

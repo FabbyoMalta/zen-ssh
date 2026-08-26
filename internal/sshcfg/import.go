@@ -68,6 +68,7 @@ func ImportCandidates(store *config.Store, candidates []Candidate) (ImportResult
 				host.KeyAuthStatus = config.KeyAuthUnknown
 			}
 			host.Group = existing[index].Group
+			host.TermType = existing[index].TermType
 			host.ImportedFingerprint = config.HostFingerprint(host)
 			existing[index] = host
 			result.Updated++

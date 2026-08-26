@@ -24,8 +24,15 @@ func (m Model) renderDashboard() string {
 		)
 	}
 
+	cursor := m.cursor
+	if cursor < 0 {
+		cursor = 0
+	} else if cursor >= len(hosts) {
+		cursor = len(hosts) - 1
+	}
+	m.cursor = cursor
 	list := m.renderHostList(hosts)
-	detail := m.renderHostDetail(hosts[m.cursor])
+	detail := m.renderHostDetail(hosts[cursor])
 	switch m.layout.variant {
 	case layoutSplit:
 		return lipgloss.JoinHorizontal(lipgloss.Top, list, " ", detail)

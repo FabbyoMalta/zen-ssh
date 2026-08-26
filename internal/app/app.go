@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -37,5 +38,19 @@ func Run() error {
 	if env == nil {
 		env = os.Environ()
 	}
+	env = environmentWithTerm(env, result.HandoffTermType())
 	return syscall.Exec(cmd.Path, cmd.Args, env)
+}
+
+func environmentWithTerm(env []string, termType string) []string {
+	if termType == "" || termType == config.TermSystem {
+		return env
+	}
+	result := make([]string, 0, len(env)+1)
+	for _, value := range env {
+		if !strings.HasPrefix(value, "TERM=") {
+			result = append(result, value)
+		}
+	}
+	return append(result, "TERM="+termType)
 }
