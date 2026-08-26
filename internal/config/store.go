@@ -33,6 +33,7 @@ type Host struct {
 	KeyAuthStatus       string    `json:"key_auth_status,omitempty"`
 	KeyAuthCheckedAt    time.Time `json:"key_auth_checked_at,omitempty"`
 	KeyAuthError        string    `json:"key_auth_error,omitempty"`
+	LastConnectedAt     time.Time `json:"last_connected_at,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }

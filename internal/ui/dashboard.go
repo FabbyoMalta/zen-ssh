@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -19,7 +20,7 @@ func (m Model) renderDashboard() string {
 			message = "Nenhum host corresponde ao filtro"
 		}
 		return m.theme.Panel.Width(maxInt(28, m.layout.contentWidth-2)).Render(
-			m.renderGroupTabs() + "\n\n" + m.theme.PanelTitle.Render(message) + "\n\n" +
+			m.renderActiveSearch() + m.renderGroupTabs() + "\n\n" + m.theme.PanelTitle.Render(message) + "\n\n" +
 				m.theme.Subtle.Render("Use a para adicionar ou i para importar sua configuracao SSH."),
 		)
 	}
@@ -87,6 +88,12 @@ func (m Model) renderHostList(hosts []config.Host) string {
 	vp := m.viewport
 	vp.Width = innerWidth
 	vp.Height = maxInt(3, m.layout.listHeight-4)
+	if len(m.recentHosts()) > 0 {
+		vp.Height = maxInt(3, vp.Height-1)
+	}
+	if m.mode == modeSearch {
+		vp.Height = maxInt(3, vp.Height-2)
+	}
 	vp.SetContent(strings.Join(lines, "\n"))
 	selectedLine := m.cursor + 1
 	if selectedLine < vp.YOffset {
@@ -100,7 +107,39 @@ func (m Model) renderHostList(hosts []config.Host) string {
 	}
 	position := m.theme.Subtle.Render(fmt.Sprintf("%d/%d", m.cursor+1, len(hosts)))
 	heading := lipgloss.JoinHorizontal(lipgloss.Center, title, strings.Repeat(" ", maxInt(1, innerWidth-lipgloss.Width(title)-lipgloss.Width(position))), position)
-	return m.theme.Panel.Width(m.layout.listWidth - 2).Height(maxInt(4, m.layout.listHeight-2)).Render(m.renderGroupTabs() + "\n" + heading + "\n" + vp.View())
+	recent := m.renderRecentConnections(innerWidth)
+	return m.theme.Panel.Width(m.layout.listWidth - 2).Height(maxInt(4, m.layout.listHeight-2)).Render(m.renderActiveSearch() + recent + m.renderGroupTabs() + "\n" + heading + "\n" + vp.View())
+}
+
+func (m Model) renderActiveSearch() string {
+	if m.mode != modeSearch {
+		return ""
+	}
+	return m.theme.InputLabel.Render("Buscar: ") + m.search.View() + "\n" +
+		m.theme.Subtle.Render("Resultados atualizados enquanto voce digita · Enter confirma · Esc cancela") + "\n"
+}
+
+func (m Model) recentHosts() []config.Host {
+	hosts := slices.Clone(m.hosts)
+	hosts = slices.DeleteFunc(hosts, func(host config.Host) bool { return host.LastConnectedAt.IsZero() })
+	slices.SortFunc(hosts, func(a, b config.Host) int { return b.LastConnectedAt.Compare(a.LastConnectedAt) })
+	if len(hosts) > 3 {
+		hosts = hosts[:3]
+	}
+	return hosts
+}
+
+func (m Model) renderRecentConnections(width int) string {
+	hosts := m.recentHosts()
+	if len(hosts) == 0 {
+		return ""
+	}
+	items := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		items = append(items, host.Alias)
+	}
+	line := "Recentes: " + strings.Join(items, "  ·  ")
+	return m.theme.Accent.Render(fitText(line, width)) + "\n"
 }
 
 func (m Model) renderGroupTabs() string {

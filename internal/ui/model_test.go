@@ -50,12 +50,112 @@ func TestVisibleHostsFiltersByGroupAndSearch(t *testing.T) {
 	}
 }
 
+func TestSearchFiltersDashboardAsUserTypes(t *testing.T) {
+	layout := calculateLayout(80, 30)
+	m := Model{
+		theme: style.New(), layout: layout, viewport: viewport.New(layout.listWidth, layout.listHeight),
+		hosts: []config.Host{
+			{Alias: "production", HostName: "prod.local", User: "root", Port: 22},
+			{Alias: "development", HostName: "dev.local", User: "root", Port: 22},
+		},
+		knownHosts: map[string]bool{},
+	}
+	updated, _ := m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = updated.(Model)
+	updated, _ = m.updateSearch(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("prod")})
+	m = updated.(Model)
+	if m.mode != modeSearch || m.query != "prod" {
+		t.Fatalf("live search state = mode %v, query %q", m.mode, m.query)
+	}
+	view := m.View()
+	if !strings.Contains(view, "production") || strings.Contains(view, "development") {
+		t.Fatalf("dashboard was not filtered live: %q", view)
+	}
+
+	updated, _ = m.updateSearch(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.mode != modeList || m.query != "" || len(m.visibleHosts()) != 2 {
+		t.Fatalf("escape did not restore the previous filter: mode %v, query %q", m.mode, m.query)
+	}
+}
+
 func TestGroupTabsAreUniqueAndSorted(t *testing.T) {
 	m := Model{hosts: []config.Host{{Group: "producao"}, {Group: "Dev"}, {Group: "PRODUCAO"}, {}}}
 	got := m.groupTabs()
 	want := []string{"", "Dev", "producao", ungroupedFilter}
 	if !slices.Equal(got, want) {
 		t.Fatalf("tabs = %#v, want %#v", got, want)
+	}
+}
+
+func TestFormCyclesExistingGroupsAndAcceptsNewOne(t *testing.T) {
+	form := newForm(config.Host{})
+	form.groups = []string{"desenvolvimento", "producao"}
+	form.cycleGroup(1)
+	if got := form.inputs[4].Value(); got != "desenvolvimento" {
+		t.Fatalf("first group = %q", got)
+	}
+	form.cycleGroup(1)
+	if got := form.inputs[4].Value(); got != "producao" {
+		t.Fatalf("second group = %q", got)
+	}
+	form.inputs[4].SetValue("novo-grupo")
+	if got := form.inputs[4].Value(); got != "novo-grupo" {
+		t.Fatalf("custom group = %q", got)
+	}
+}
+
+func TestRecentHostsReturnsLatestThree(t *testing.T) {
+	now := time.Now()
+	m := Model{hosts: []config.Host{
+		{Alias: "never"},
+		{Alias: "older", LastConnectedAt: now.Add(-4 * time.Hour)},
+		{Alias: "first", LastConnectedAt: now},
+		{Alias: "third", LastConnectedAt: now.Add(-2 * time.Hour)},
+		{Alias: "second", LastConnectedAt: now.Add(-time.Hour)},
+	}}
+	got := m.recentHosts()
+	want := []string{"first", "second", "third"}
+	if len(got) != len(want) {
+		t.Fatalf("recent hosts = %#v", got)
+	}
+	for i := range want {
+		if got[i].Alias != want[i] {
+			t.Fatalf("recent host %d = %q, want %q", i, got[i].Alias, want[i])
+		}
+	}
+}
+
+func TestPersistHostOptionsRecordsConnection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store, err := config.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := config.Host{Alias: "prod", HostName: "prod.local", User: "deploy", Port: 22, Management: config.ManagementManual}
+	if err := sshcfg.SaveAll(store, []config.Host{host}); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistHostOptions(store, host); err != nil {
+		t.Fatal(err)
+	}
+	hosts, err := store.LoadHosts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hosts[0].LastConnectedAt.IsZero() {
+		t.Fatal("connection timestamp was not recorded")
+	}
+
+	connectedAt := hosts[0].LastConnectedAt
+	host = hosts[0]
+	host.Group = "producao"
+	if err := upsertHost(store, host, host.Alias); err != nil {
+		t.Fatal(err)
+	}
+	hosts, _ = store.LoadHosts()
+	if !hosts[0].LastConnectedAt.Equal(connectedAt) {
+		t.Fatal("editing the host discarded its connection history")
 	}
 }
 

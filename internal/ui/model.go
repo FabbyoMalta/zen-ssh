@@ -103,6 +103,7 @@ type formState struct {
 	sendKey    bool
 	cursor     int
 	base       config.Host
+	groups     []string
 }
 
 type importState struct {
@@ -127,6 +128,7 @@ type Model struct {
 	pendingOp       operation
 	importer        importState
 	search          textinput.Model
+	searchOriginal  string
 	query           string
 	groupFilter     string
 	selected        map[string]bool
@@ -220,6 +222,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.keepForm {
 			m.mode = modeForm
 			m.form = msg.form
+			m.form.groups = m.existingGroups()
 		} else {
 			m.mode = modeList
 		}
@@ -464,6 +467,8 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.search = textinput.New()
 		m.search.Placeholder = "alias, host, grupo ou origem"
 		m.search.SetValue(m.query)
+		m.search.Width = maxInt(18, minInt(48, m.layout.listWidth-14))
+		m.searchOriginal = m.query
 		m.search.Focus()
 		m.mode = modeSearch
 		return m, textinput.Blink
@@ -492,6 +497,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeConfirmRestore
 	case "a":
 		m.form = newForm(config.Host{})
+		m.form.groups = m.existingGroups()
 		m.mode = modeForm
 	case "i":
 		discovery, err := sshcfg.Discover(m.store.ManagedSSHConfigPath())
@@ -506,6 +512,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "e":
 		if host, ok := m.currentHost(); ok {
 			m.form = newEditForm(host)
+			m.form.groups = m.existingGroups()
 			m.mode = modeForm
 		}
 	case "d":
@@ -644,16 +651,18 @@ func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
-		m.query = strings.TrimSpace(m.search.Value())
-		m.cursor = 0
 		m.mode = modeList
 		return m, nil
 	case "esc":
+		m.query = m.searchOriginal
+		m.cursor = 0
 		m.mode = modeList
 		return m, nil
 	}
 	var cmd tea.Cmd
 	m.search, cmd = m.search.Update(msg)
+	m.query = strings.TrimSpace(m.search.Value())
+	m.cursor = 0
 	return m, cmd
 }
 
@@ -764,6 +773,14 @@ func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "left", "right":
+		if m.form.cursor == 4 && len(m.form.groups) > 0 {
+			delta := 1
+			if msg.String() == "left" {
+				delta = -1
+			}
+			m.form.cycleGroup(delta)
+			return m, nil
+		}
 		if m.form.cursor == fieldCount {
 			delta := 1
 			if msg.String() == "left" {
@@ -812,6 +829,7 @@ func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 
 			m.form = newForm(config.Host{})
+			m.form.groups = m.existingGroups()
 			m.mode = modeForm
 			m.status = fmt.Sprintf("Host %s salvo. Preencha o proximo cadastro.", host.Alias)
 			m.statusStyle = m.theme.Success
@@ -885,7 +903,7 @@ func (m Model) View() string {
 	case modeImport:
 		body = m.renderImport()
 	case modeSearch:
-		body = m.theme.Panel.Render("Buscar hosts\n\n" + m.search.View() + "\n\nEnter aplica · Esc cancela")
+		body = m.renderList()
 	case modeDetails:
 		body = m.theme.Panel.Render(m.details + "\n\nEsc volta")
 	case modeConfirmRestore:
@@ -1006,6 +1024,10 @@ func (m Model) renderForm() string {
 			rows = append(rows, m.theme.PanelTitle.Render("Conexao"), "")
 		}
 		rows = append(rows, m.theme.InputLabel.Render(labels[step]), input.View())
+		if step == 4 && len(m.form.groups) > 0 {
+			groups := strings.Join(m.form.groups, " · ")
+			rows = append(rows, "", m.theme.Subtle.Render(fitText("←/→ seleciona: "+groups+" · digite para criar", inputWidth)))
+		}
 	case step < fieldCount:
 		identityIndex := step - len(m.form.inputs)
 		input := m.form.identities[identityIndex]
@@ -1218,6 +1240,17 @@ func (m Model) groupTabs() []string {
 		tabs = append(tabs, ungroupedFilter)
 	}
 	return tabs
+}
+
+func (m Model) existingGroups() []string {
+	tabs := m.groupTabs()
+	groups := make([]string, 0, len(tabs))
+	for _, group := range tabs {
+		if group != "" && group != ungroupedFilter {
+			groups = append(groups, group)
+		}
+	}
+	return groups
 }
 
 func (m *Model) cycleGroup(delta int) {
@@ -1461,6 +1494,30 @@ func (f formState) host() (config.Host, error) {
 	return host, nil
 }
 
+func (f *formState) cycleGroup(delta int) {
+	if len(f.groups) == 0 {
+		return
+	}
+	current := -1
+	value := strings.TrimSpace(f.inputs[4].Value())
+	for i, group := range f.groups {
+		if strings.EqualFold(group, value) {
+			current = i
+			break
+		}
+	}
+	if current < 0 {
+		if delta < 0 {
+			current = 0
+		} else {
+			current = -1
+		}
+	}
+	next := (current + delta + len(f.groups)) % len(f.groups)
+	f.inputs[4].SetValue(f.groups[next])
+	f.inputs[4].CursorEnd()
+}
+
 func runGenerateKey(host config.Host) tea.Cmd {
 	return func() tea.Msg {
 		identity := host.PrimaryIdentity()
@@ -1571,23 +1628,16 @@ func persistHostOptions(store *config.Store, host config.Host) error {
 		return err
 	}
 
-	changed := false
 	for i := range hosts {
 		if hosts[i].Alias != host.Alias {
 			continue
 		}
-		if strings.Join(hosts[i].SSHOptions, "\x00") == strings.Join(host.SSHOptions, "\x00") {
-			return nil
-		}
 		hosts[i].SSHOptions = append([]string{}, host.SSHOptions...)
+		hosts[i].LastConnectedAt = time.Now()
 		hosts[i].UpdatedAt = time.Now()
-		changed = true
-		break
+		return sshcfg.SaveAll(store, hosts)
 	}
-	if !changed {
-		return nil
-	}
-	return sshcfg.SaveAll(store, hosts)
+	return nil
 }
 
 func upsertHost(store *config.Store, host config.Host, originalAlias string) error {
@@ -1610,6 +1660,7 @@ func upsertHost(store *config.Store, host config.Host, originalAlias string) err
 				host.KeyAuthError = ""
 			}
 			host.CreatedAt = hosts[i].CreatedAt
+			host.LastConnectedAt = hosts[i].LastConnectedAt
 			host.UpdatedAt = now
 			host.KeySent = hosts[i].KeySent
 			hosts[i] = host
