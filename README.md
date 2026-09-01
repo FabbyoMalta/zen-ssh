@@ -270,3 +270,7 @@ git push origin v0.3.0
 ```
 
 O workflow executa os testes, compila os binários, gera os checksums e publica uma GitHub Release com notas automáticas.
+
+## Licença
+
+Uso livre para estudo, modificação e adaptação.
