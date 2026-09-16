@@ -1485,6 +1485,9 @@ func (f formState) host() (config.Host, error) {
 	host.IdentityFile = ""
 	host.SSHOptions = append([]string{}, f.sshOptions...)
 	host.TermType = normalizedTermType(f.termType)
+	if f.editing && host.Management == config.ManagementReadOnly {
+		host.Management = config.ManagementManaged
+	}
 	if host.Management == "" {
 		host.Management = config.ManagementManual
 	}

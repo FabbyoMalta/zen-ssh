@@ -100,6 +100,33 @@ func TestCollectAliasesSupportsQuotedIncludeAndInlineComment(t *testing.T) {
 	}
 }
 
+func TestCollectAliasesIncludesSystemConfigAndPreservesUserPriority(t *testing.T) {
+	dir := t.TempDir()
+	user := filepath.Join(dir, "user-config")
+	systemDir := filepath.Join(dir, "system")
+	if err := os.MkdirAll(systemDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	system := filepath.Join(systemDir, "ssh_config")
+	included := filepath.Join(systemDir, "hosts.conf")
+	if err := os.WriteFile(user, []byte("Host shared\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(system, []byte("Include hosts.conf\nHost shared\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(included, []byte("Host system-only\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	aliases, sources, err := collectAliasesFromPaths([]string{user, system}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(aliases, []string{"shared", "system-only"}) || sources["shared"] != user || sources["system-only"] != included {
+		t.Fatalf("aliases = %#v, sources = %#v", aliases, sources)
+	}
+}
+
 func TestParseEtcHostsFiltersLocalhost(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hosts")
 	data := "127.0.0.1 localhost\n10.0.0.2 db db.internal # database\n::1 localhost\n"

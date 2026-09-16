@@ -7,7 +7,7 @@ O projeto não implementa um cliente SSH próprio e não armazena chaves privada
 ## Recursos
 
 - descoberta inicial de configurações existentes;
-- importação de aliases de `~/.ssh/config` e arquivos declarados com `Include`;
+- importação de aliases de `~/.ssh/config`, `/etc/ssh/ssh_config` e arquivos declarados com `Include`;
 - resolução da configuração efetiva por meio de `ssh -G`, incluindo regras de `/etc/ssh/ssh_config`;
 - descoberta opcional de hosts registrados em `/etc/hosts`;
 - identificação de chaves privadas em `~/.ssh`, mantendo apenas a referência aos arquivos;
@@ -149,6 +149,8 @@ O campo de grupo pode ser deixado vazio para remover os hosts selecionados de se
 | `b` | Restaurar o backup de `~/.ssh/config` com confirmação |
 
 Ao iniciar uma conexão, a TUI é encerrada e o processo do ZenSSH é substituído pelo OpenSSH. Quando a sessão remota termina, o terminal retorna diretamente ao shell. Esse comportamento evita que a interface tente recuperar ou redesenhar o terminal após a conexão.
+
+Hosts importados em modo somente leitura seguem a configuração SSH de origem. Ao editar e salvar um desses hosts, o ZenSSH passa a gerenciá-lo em `~/.config/zenssh/ssh_config` e usa os valores editados nas conexões. O arquivo de origem em `/etc/ssh` não é alterado.
 
 ## Cadastro de hosts
 

@@ -324,6 +324,9 @@ func Connect(host config.Host) (config.Host, error) {
 
 func PrepareConnect(host config.Host) (config.Host, *exec.Cmd, error) {
 	if host.Management == config.ManagementReadOnly {
+		if hasLocalSSHChanges(host) {
+			return host, exec.Command("ssh", sshArgs(host, host.SSHOptions)...), nil
+		}
 		return host, exec.Command("ssh", host.Alias), nil
 	}
 	options, err := resolveCompatOptions(host)
@@ -335,6 +338,10 @@ func PrepareConnect(host config.Host) (config.Host, *exec.Cmd, error) {
 	args := sshArgs(host, options)
 	cmd := exec.Command("ssh", args...)
 	return host, cmd, nil
+}
+
+func hasLocalSSHChanges(host config.Host) bool {
+	return host.ImportedFingerprint != "" && config.HostFingerprint(host) != host.ImportedFingerprint
 }
 
 func PreparePushKey(host config.Host) (config.Host, *exec.Cmd, error) {

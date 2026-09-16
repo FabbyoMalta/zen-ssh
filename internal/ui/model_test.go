@@ -29,6 +29,22 @@ func TestVisibleHostsFiltersAllMetadata(t *testing.T) {
 	}
 }
 
+func TestEditingReadOnlyHostMakesPortManaged(t *testing.T) {
+	host := config.Host{Alias: "prod", HostName: "server.example", User: "deploy", Port: 22, Source: "ssh-config", Management: config.ManagementReadOnly}
+	form := newEditForm(host)
+	form.inputs[2].SetValue("2222")
+	updated, err := form.host()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Management != config.ManagementManaged || updated.Port != 2222 {
+		t.Fatalf("edited host = %#v", updated)
+	}
+	if !strings.Contains(sshcfg.RenderManagedConfig([]config.Host{updated}), "Port 2222") {
+		t.Fatal("edited port was not written to managed SSH config")
+	}
+}
+
 func TestVisibleHostsFiltersByGroupAndSearch(t *testing.T) {
 	m := Model{hosts: []config.Host{
 		{Alias: "prod-api", Group: "producao"},

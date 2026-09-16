@@ -105,6 +105,19 @@ func TestReadOnlyHostIsNotRendered(t *testing.T) {
 	}
 }
 
+func TestEditedReadOnlyHostConnectsWithSavedPort(t *testing.T) {
+	host := config.Host{Alias: "external", HostName: "server.example", User: "deploy", Port: 22, Management: config.ManagementReadOnly}
+	host.ImportedFingerprint = config.HostFingerprint(host)
+	host.Port = 2222
+	_, cmd, err := PrepareConnect(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cmd.Args, []string{"ssh", "-p", "2222", "deploy@server.example"}) {
+		t.Fatalf("command = %#v", cmd.Args)
+	}
+}
+
 func TestAtomicWritePreservesConfigSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "real-config")

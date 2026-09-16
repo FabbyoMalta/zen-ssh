@@ -34,7 +34,7 @@ func Discover(managedPath string) (Discovery, error) {
 		return Discovery{}, err
 	}
 	mainConfig := filepath.Join(home, ".ssh", "config")
-	aliases, sources, err := collectAliases(mainConfig, managedPath)
+	aliases, sources, err := collectAliasesFromPaths([]string{mainConfig, "/etc/ssh/ssh_config"}, managedPath)
 	if err != nil && !os.IsNotExist(err) {
 		return Discovery{}, err
 	}
@@ -200,8 +200,11 @@ func resolvedOption(key, value string) (string, bool) {
 }
 
 func collectAliases(mainConfig, managedPath string) ([]string, map[string]string, error) {
+	return collectAliasesFromPaths([]string{mainConfig}, managedPath)
+}
+
+func collectAliasesFromPaths(paths []string, managedPath string) ([]string, map[string]string, error) {
 	visited, sources := map[string]bool{}, map[string]string{}
-	rootDir := filepath.Dir(mainConfig)
 	var aliases []string
 	var walk func(string) error
 	walk = func(path string) error {
@@ -213,6 +216,7 @@ func collectAliases(mainConfig, managedPath string) ([]string, map[string]string
 			return nil
 		}
 		visited[absolute] = true
+		rootDir := filepath.Dir(absolute)
 		if managedPath != "" {
 			if managed, _ := filepath.Abs(managedPath); managed == absolute {
 				return nil
@@ -255,8 +259,12 @@ func collectAliases(mainConfig, managedPath string) ([]string, map[string]string
 		}
 		return s.Err()
 	}
-	err := walk(mainConfig)
-	return aliases, sources, err
+	for _, path := range paths {
+		if err := walk(path); err != nil && !os.IsNotExist(err) {
+			return aliases, sources, err
+		}
+	}
+	return aliases, sources, nil
 }
 
 func parseEtcHosts(path string) ([]config.Host, error) {
