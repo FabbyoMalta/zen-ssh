@@ -16,7 +16,9 @@ func (m Model) renderDashboard() string {
 	hosts := m.visibleHosts()
 	if len(hosts) == 0 {
 		message := "Nenhum host cadastrado"
-		if m.query != "" {
+		if m.recentOnly {
+			message = "Nenhuma conexao recente neste filtro · r: todos os hosts"
+		} else if m.query != "" {
 			message = "Nenhum host corresponde ao filtro"
 		}
 		return m.theme.Panel.Width(maxInt(28, m.layout.contentWidth-2)).Render(
@@ -101,7 +103,11 @@ func (m Model) renderHostList(hosts []config.Host) string {
 	} else if selectedLine >= vp.YOffset+vp.Height {
 		vp.SetYOffset(selectedLine - vp.Height + 1)
 	}
-	title := m.theme.PanelTitle.Render("Hosts")
+	titleText := "Hosts"
+	if m.recentOnly {
+		titleText = "Recentes · r: todos"
+	}
+	title := m.theme.PanelTitle.Render(titleText)
 	if m.selectionMode {
 		title += m.theme.Subtle.Render(fmt.Sprintf(" · %d selecionados", len(m.selected)))
 	}
@@ -138,7 +144,7 @@ func (m Model) renderRecentConnections(width int) string {
 	for _, host := range hosts {
 		items = append(items, host.Alias)
 	}
-	line := "Recentes: " + strings.Join(items, "  ·  ")
+	line := "Recentes [r]: " + strings.Join(items, "  ·  ")
 	return m.theme.Accent.Render(fitText(line, width)) + "\n"
 }
 

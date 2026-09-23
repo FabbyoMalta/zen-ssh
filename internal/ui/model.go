@@ -130,6 +130,7 @@ type Model struct {
 	search          textinput.Model
 	searchOriginal  string
 	query           string
+	recentOnly      bool
 	groupFilter     string
 	selected        map[string]bool
 	selectionMode   bool
@@ -439,6 +440,10 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Modo de selecao encerrado."
 			m.statusStyle = m.theme.Subtle
 		}
+	case "r":
+		m.recentOnly = !m.recentOnly
+		m.cursor = 0
+		m.viewport.GotoTop()
 	case "[":
 		m.cycleGroup(-1)
 	case "]":
@@ -568,6 +573,29 @@ func (m Model) HandoffCommand() *exec.Cmd {
 // HandoffTermType returns the TERM value to apply before SSH starts.
 func (m Model) HandoffTermType() string {
 	return m.handoffTermType
+}
+
+// ResumeAfterSSH restores the dashboard after the child SSH process exits.
+func (m Model) ResumeAfterSSH(sessionErr error) Model {
+	m.handoffCmd = nil
+	m.handoffTermType = ""
+	m.pendingOp = opNone
+	m.mode = modeList
+	m.status = "Sessao SSH encerrada."
+	m.statusStyle = m.theme.Success
+	if sessionErr != nil {
+		m.status = fmt.Sprintf("Sessao SSH encerrada com erro: %v", sessionErr)
+		m.statusStyle = m.theme.Danger
+	}
+	if hosts, err := m.store.LoadHosts(); err != nil {
+		m.status += fmt.Sprintf(" Falha ao atualizar hosts: %v", err)
+		m.statusStyle = m.theme.Danger
+	} else {
+		m.hosts = hosts
+		m.syncCursor()
+		m.refreshKnownHosts()
+	}
+	return m
 }
 
 func (m Model) updateImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1201,6 +1229,9 @@ func (m Model) visibleHosts() []config.Host {
 	query := strings.ToLower(strings.TrimSpace(m.query))
 	result := make([]config.Host, 0, len(m.hosts))
 	for _, host := range m.hosts {
+		if m.recentOnly && host.LastConnectedAt.IsZero() {
+			continue
+		}
 		if m.groupFilter == ungroupedFilter && strings.TrimSpace(host.Group) != "" {
 			continue
 		}
@@ -1211,6 +1242,9 @@ func (m Model) visibleHosts() []config.Host {
 		if query == "" || strings.Contains(haystack, query) {
 			result = append(result, host)
 		}
+	}
+	if m.recentOnly {
+		slices.SortStableFunc(result, func(a, b config.Host) int { return b.LastConnectedAt.Compare(a.LastConnectedAt) })
 	}
 	return result
 }

@@ -118,12 +118,15 @@ Include ~/.config/zenssh/ssh_config
 | `↓` / `j` | Selecionar o próximo host |
 | `Enter` | Conectar ao host selecionado |
 | `/` | Buscar hosts |
+| `r` | Alternar entre todos os hosts e os recentes |
 | `a` | Adicionar um host |
 | `e` | Editar o host selecionado |
 | `d` | Remover o host selecionado |
 | `i` | Sincronizar novamente as configurações locais |
 | `?` | Exibir a ajuda completa |
 | `q` | Encerrar o ZenSSH |
+
+Ao encerrar a sessão SSH, o ZenSSH volta automaticamente à interface, inclusive quando a conexão falha. Pressione `r` para listar os hosts já acessados, do mais recente ao mais antigo, e use as setas e `Enter` para reconectar. A lista de recentes respeita a busca e o grupo ativos; pressione `r` novamente para voltar à lista completa.
 
 ### Grupos e seleção em massa
 

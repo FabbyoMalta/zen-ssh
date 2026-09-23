@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -429,5 +430,64 @@ func TestPersistAuthResultStoresFailureAndSuccess(t *testing.T) {
 	hosts, _ = store.LoadHosts()
 	if hosts[0].KeyAuthStatus != config.KeyAuthValidated || hosts[0].KeyAuthError != "" {
 		t.Fatalf("success not stored: %#v", hosts[0])
+	}
+}
+
+func TestRecentListNavigationAndFilters(t *testing.T) {
+	now := time.Now()
+	m := Model{hosts: []config.Host{
+		{Alias: "never", Group: "prod"},
+		{Alias: "old", Group: "prod", LastConnectedAt: now.Add(-time.Hour)},
+		{Alias: "new", Group: "prod", LastConnectedAt: now},
+		{Alias: "other", Group: "dev", LastConnectedAt: now},
+	}, groupFilter: "prod", cursor: 2}
+	updated, _ := m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	m = updated.(Model)
+	hosts := m.visibleHosts()
+	if len(hosts) != 2 || hosts[0].Alias != "new" || hosts[1].Alias != "old" || m.cursor != 0 {
+		t.Fatalf("unexpected recent list: %#v, cursor %d", hosts, m.cursor)
+	}
+	updated, _ = m.updateList(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	if host, ok := m.currentHost(); !ok || host.Alias != "old" {
+		t.Fatalf("selected host = %#v", host)
+	}
+	m.query = "new"
+	if hosts := m.visibleHosts(); len(hosts) != 1 || hosts[0].Alias != "new" {
+		t.Fatalf("search results = %#v", hosts)
+	}
+	m.query = ""
+	updated, _ = m.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	m = updated.(Model)
+	if m.recentOnly || len(m.visibleHosts()) != 3 || m.cursor != 0 {
+		t.Fatal("did not return to all hosts")
+	}
+}
+
+func TestResumeAfterSSHReloadsHostsAndClearsHandoff(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store, err := config.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := config.Host{Alias: "prod", HostName: "prod.local", User: "deploy", Port: 22, Management: config.ManagementManual}
+	if err := sshcfg.SaveAll(store, []config.Host{host}); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistHostOptions(store, host); err != nil {
+		t.Fatal(err)
+	}
+	for _, sessionErr := range []error{nil, errors.New("exit status 255")} {
+		m := Model{store: store, theme: style.New(), mode: modeBusy, pendingOp: opConnect, handoffCmd: &exec.Cmd{}, handoffTermType: config.TermXterm, recentOnly: true, groupFilter: "", query: "prod"}
+		m = m.ResumeAfterSSH(sessionErr)
+		if m.HandoffCommand() != nil || m.HandoffTermType() != "" || m.mode != modeList || m.pendingOp != opNone {
+			t.Fatal("SSH handoff state was not reset")
+		}
+		if !m.recentOnly || m.query != "prod" || len(m.visibleHosts()) != 1 || m.hosts[0].LastConnectedAt.IsZero() {
+			t.Fatal("dashboard state or recent history was lost")
+		}
+		if sessionErr != nil && !strings.Contains(m.status, sessionErr.Error()) {
+			t.Fatalf("missing session error: %s", m.status)
+		}
 	}
 }

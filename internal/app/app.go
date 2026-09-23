@@ -3,7 +3,6 @@ package app
 import (
 	"os"
 	"strings"
-	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -24,22 +23,25 @@ func Run() error {
 		return err
 	}
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	finalModel, err := p.Run()
-	if err != nil {
-		return err
+	for {
+		p := tea.NewProgram(model, tea.WithAltScreen())
+		finalModel, err := p.Run()
+		if err != nil {
+			return err
+		}
+		result, ok := finalModel.(ui.Model)
+		if !ok || result.HandoffCommand() == nil {
+			return nil
+		}
+		cmd := result.HandoffCommand()
+		env := cmd.Env
+		if env == nil {
+			env = os.Environ()
+		}
+		cmd.Env = environmentWithTerm(env, result.HandoffTermType())
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		model = result.ResumeAfterSSH(cmd.Run())
 	}
-	result, ok := finalModel.(ui.Model)
-	if !ok || result.HandoffCommand() == nil {
-		return nil
-	}
-	cmd := result.HandoffCommand()
-	env := cmd.Env
-	if env == nil {
-		env = os.Environ()
-	}
-	env = environmentWithTerm(env, result.HandoffTermType())
-	return syscall.Exec(cmd.Path, cmd.Args, env)
 }
 
 func environmentWithTerm(env []string, termType string) []string {
