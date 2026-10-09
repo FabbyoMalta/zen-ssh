@@ -117,6 +117,7 @@ Include ~/.config/zenssh/ssh_config
 | `↑` / `k` | Selecionar o host anterior |
 | `↓` / `j` | Selecionar o próximo host |
 | `Enter` | Conectar ao host selecionado |
+| `Shift+L` | Conectar ao host selecionado e gravar a sessão localmente |
 | `/` | Buscar hosts |
 | `r` | Alternar entre todos os hosts e os recentes |
 | `a` | Adicionar um host |
@@ -127,6 +128,12 @@ Include ~/.config/zenssh/ssh_config
 | `q` | Encerrar o ZenSSH |
 
 Ao encerrar a sessão SSH, o ZenSSH volta automaticamente à interface, inclusive quando a conexão falha. Pressione `r` para listar os hosts já acessados, do mais recente ao mais antigo, e use as setas e `Enter` para reconectar. A lista de recentes respeita a busca e o grupo ativos; pressione `r` novamente para voltar à lista completa.
+
+### Gravação de sessões SSH
+
+Pressione `Shift+L` (`L` maiúsculo) para abrir uma conexão com gravação. Cada sessão cria um arquivo exclusivo em `~/.local/state/zenssh/sessions/<host>-<data>-<hora>-<identificador>.log`, com permissão `0600`. Ao sair do SSH, a interface mostra o caminho da gravação, inclusive quando a conexão termina com erro. `Enter` continua abrindo uma conexão sem gravação.
+
+Este recurso requer o comando `script` do pacote `util-linux` no Linux. O arquivo registra o que aparece no terminal, incluindo prompts, comandos com eco habilitado e suas saídas. A entrada do teclado não é gravada separadamente; senhas sem eco não entram no registro. Comandos que desativam o eco também não aparecem. O arquivo pode conter dados sensíveis exibidos na sessão e sequências de controle de programas interativos. Para visualizar, use `less -R caminho/do/arquivo.log`. A gravação é atualizada durante a sessão e os arquivos ficam disponíveis até você removê-los.
 
 ### Grupos e seleção em massa
 

@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"zenssh/internal/config"
+	"zenssh/internal/recording"
 	"zenssh/internal/sshcfg"
 	"zenssh/internal/style"
 )
@@ -139,6 +140,7 @@ type Model struct {
 	knownHosts      map[string]bool
 	handoffCmd      *exec.Cmd
 	handoffTermType string
+	sessionLog      string
 	keys            keyMap
 	help            help.Model
 	viewport        viewport.Model
@@ -542,13 +544,24 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pendingOp = opAuthCheck
 			return m, tea.Batch(m.spinner.Tick, runAuthCheck(host))
 		}
-	case "enter":
+	case "enter", "L":
 		if host, ok := m.currentHost(); ok {
+			var sessionLog string
 			updatedHost, cmd, err := sshcfg.PrepareConnect(host)
 			if err != nil {
 				m.status = fmt.Sprintf("Falha: %v", err)
 				m.statusStyle = m.theme.Danger
 				return m, nil
+			}
+			if msg.String() == "L" {
+				var path string
+				cmd, path, err = recording.Prepare(cmd, updatedHost.Alias)
+				if err != nil {
+					m.status = fmt.Sprintf("Falha ao iniciar gravacao: %v", err)
+					m.statusStyle = m.theme.Danger
+					return m, nil
+				}
+				sessionLog = path
 			}
 			if err := persistHostOptions(m.store, updatedHost); err != nil {
 				m.status = fmt.Sprintf("Falha: %v", err)
@@ -556,6 +569,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.pendingOp = opConnect
+			m.sessionLog = sessionLog
 			m.handoffCmd = cmd
 			m.handoffTermType = updatedHost.TermType
 			return m, tea.Quit
@@ -586,6 +600,10 @@ func (m Model) ResumeAfterSSH(sessionErr error) Model {
 	if sessionErr != nil {
 		m.status = fmt.Sprintf("Sessao SSH encerrada com erro: %v", sessionErr)
 		m.statusStyle = m.theme.Danger
+	}
+	if m.sessionLog != "" {
+		m.status += " Gravacao: " + m.sessionLog
+		m.sessionLog = ""
 	}
 	if hosts, err := m.store.LoadHosts(); err != nil {
 		m.status += fmt.Sprintf(" Falha ao atualizar hosts: %v", err)

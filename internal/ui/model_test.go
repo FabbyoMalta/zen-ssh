@@ -479,7 +479,11 @@ func TestResumeAfterSSHReloadsHostsAndClearsHandoff(t *testing.T) {
 	}
 	for _, sessionErr := range []error{nil, errors.New("exit status 255")} {
 		m := Model{store: store, theme: style.New(), mode: modeBusy, pendingOp: opConnect, handoffCmd: &exec.Cmd{}, handoffTermType: config.TermXterm, recentOnly: true, groupFilter: "", query: "prod"}
+		m.sessionLog = "/tmp/session.log"
 		m = m.ResumeAfterSSH(sessionErr)
+		if m.sessionLog != "" || !strings.Contains(m.status, "/tmp/session.log") {
+			t.Fatal("recording path not reported or recording state not reset")
+		}
 		if m.HandoffCommand() != nil || m.HandoffTermType() != "" || m.mode != modeList || m.pendingOp != opNone {
 			t.Fatal("SSH handoff state was not reset")
 		}
