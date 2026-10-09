@@ -2,11 +2,13 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,6 +31,8 @@ type filesState struct {
 	remoteActive  bool
 	confirm       bool
 	input         *textinput.Model
+	loading       bool
+	cancel        context.CancelFunc
 }
 
 type filesListedMsg struct {
@@ -36,6 +40,7 @@ type filesListedMsg struct {
 	dir     string
 	entries []filetransfer.Entry
 	err     error
+	request uint64
 }
 type fileCopiedMsg struct{ err error }
 
@@ -62,14 +67,24 @@ func (m Model) openFiles() (tea.Model, tea.Cmd) {
 		m.statusStyle = m.theme.Danger
 		return m, nil
 	}
-	m.files = filesState{client: filetransfer.New(ssh), alias: host.Alias, local: filePane{dir: dir, entries: entries}}
+	client, err := filetransfer.New(ssh).Multiplex()
+	if err != nil {
+		m.status = err.Error()
+		m.statusStyle = m.theme.Danger
+		return m, nil
+	}
+	m.files = filesState{client: client, alias: host.Alias, local: filePane{dir: dir, entries: entries}}
 	m.mode = modeFiles
 	m.status = "Arquivos · c copia o item selecionado para a pasta do outro painel."
 	m.statusStyle = m.theme.Subtle
-	return m, m.listRemote(".")
+	cmd := m.listRemoteInteractive(".")
+	return m, cmd
 }
 
-func (m Model) listRemote(dir string) tea.Cmd {
+func (m *Model) listRemoteInteractive(dir string) tea.Cmd {
+	m.fileRequest++
+	request := m.fileRequest
+	m.files.loading = true
 	cmd := m.files.client.ListCommand(dir)
 	var output bytes.Buffer
 	cmd.Stdout = &output
@@ -77,11 +92,35 @@ func (m Model) listRemote(dir string) tea.Cmd {
 	// captured; SSH diagnostics and authentication remain on the real terminal.
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		if err != nil {
-			return filesListedMsg{remote: true, err: fmt.Errorf("SSH: %w (veja a mensagem no terminal)", err)}
+			return filesListedMsg{remote: true, request: request, err: fmt.Errorf("SSH: %w (veja a mensagem no terminal)", err)}
 		}
 		resolved, entries, err := filetransfer.ParseListing(output.Bytes())
-		return filesListedMsg{remote: true, dir: resolved, entries: entries, err: err}
+		return filesListedMsg{remote: true, request: request, dir: resolved, entries: entries, err: err}
 	})
+}
+
+func (m *Model) listRemote(dir string) tea.Cmd {
+	if m.files.cancel != nil {
+		m.files.cancel()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	m.files.cancel = cancel
+	m.files.loading = true
+	m.fileRequest++
+	request := m.fileRequest
+	client := m.files.client
+	return func() tea.Msg {
+		defer cancel()
+		cmd := client.BackgroundListCommand(ctx, dir)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		data, err := cmd.Output()
+		if err != nil {
+			return filesListedMsg{remote: true, request: request, err: fmt.Errorf("SSH: %w · %s · a: reautenticar", err, fileDisplayText(strings.TrimSpace(stderr.String())))}
+		}
+		resolved, entries, err := filetransfer.ParseListing(data)
+		return filesListedMsg{remote: true, request: request, dir: resolved, entries: entries, err: err}
+	}
 }
 
 func (m Model) listLocal(dir string) tea.Cmd {
@@ -100,6 +139,22 @@ func (m *Model) activeFilePane() *filePane {
 
 func (m Model) updateFiles(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
+	if k == "ctrl+c" || (m.files.input == nil && !m.files.confirm && (k == "esc" || k == "q")) {
+		client := m.files.client
+		if m.files.cancel != nil {
+			m.files.cancel()
+		}
+		m.files = filesState{}
+		m.mode = modeList
+		cleanup := func() tea.Msg { client.Close(); return nil }
+		if k == "ctrl+c" {
+			return m, tea.Sequence(cleanup, tea.Quit)
+		}
+		return m, cleanup
+	}
+	if m.files.loading && (k == "c" || k == "a" || m.files.remoteActive && (k == "enter" || k == "backspace" || k == "r" || k == "/")) {
+		return m, nil
+	}
 	if m.files.input != nil {
 		switch k {
 		case "esc":
@@ -115,7 +170,8 @@ func (m Model) updateFiles(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if !path.IsAbs(dir) {
 					dir = path.Join(m.files.remote.dir, dir)
 				}
-				return m, m.listRemote(dir)
+				cmd := m.listRemote(dir)
+				return m, cmd
 			}
 			if !filepath.IsAbs(dir) {
 				dir = filepath.Join(m.files.local.dir, dir)
@@ -139,12 +195,13 @@ func (m Model) updateFiles(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	pane := m.activeFilePane()
 	switch k {
-	case "esc", "q":
-		m.mode = modeList
-		m.files = filesState{}
-		return m, nil
-	case "ctrl+c":
-		return m, tea.Quit
+	case "a":
+		dir := m.files.remote.dir
+		if dir == "" {
+			dir = "."
+		}
+		cmd := m.listRemoteInteractive(dir)
+		return m, cmd
 	case "tab", "shift+tab":
 		m.files.remoteActive = !m.files.remoteActive
 	case "up", "k":
@@ -161,7 +218,8 @@ func (m Model) updateFiles(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if dir == "" {
 				dir = "."
 			}
-			return m, m.listRemote(dir)
+			cmd := m.listRemote(dir)
+			return m, cmd
 		}
 		return m, m.listLocal(pane.dir)
 	case "/":
@@ -194,7 +252,8 @@ func (m Model) updateFiles(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.files.remoteActive {
-			return m, m.listRemote(dir)
+			cmd := m.listRemote(dir)
+			return m, cmd
 		}
 		return m, m.listLocal(dir)
 	case "c":
@@ -275,10 +334,18 @@ func (m Model) renderFiles() string {
 		return m.theme.Panel.Width(width).Render(strings.Join(lines, "\n"))
 	}
 	local := render(m.files.local, "Local", !m.files.remoteActive)
-	remote := render(m.files.remote, "Remoto · "+m.files.alias, m.files.remoteActive)
+	remoteTitle := "Remoto · " + m.files.alias
+	if m.files.loading {
+		remoteTitle += " · carregando…"
+	}
+	remote := render(m.files.remote, remoteTitle, m.files.remoteActive)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, local, " ", remote)
 	if m.width < 70 {
-		body = render(*m.activeFilePane(), map[bool]string{false: "Local", true: "Remoto · " + m.files.alias}[m.files.remoteActive], true)
+		title := "Local"
+		if m.files.remoteActive {
+			title = remoteTitle
+		}
+		body = render(*m.activeFilePane(), title, true)
 	}
 	if m.files.input != nil {
 		body += "\n" + m.files.input.View()
@@ -294,7 +361,7 @@ func (m Model) renderFiles() string {
 		}
 		body += fmt.Sprintf("\n%s %q para %q?\nArquivos existentes com o mesmo nome serao sobrescritos.\nPastas serao mescladas recursivamente; SCP segue links dentro delas.\ny confirma · n/Esc cancela", direction, entry.Name, destination)
 	}
-	return body + "\n\nTab: painel · ↑/↓: selecionar · Enter: abrir · Backspace: subir\nc: copiar · /: caminho · r: atualizar · Esc: hosts"
+	return body + "\n\nTab: painel · ↑/↓: selecionar · Enter: abrir · Backspace: subir\nc: copiar · /: caminho · r: atualizar · a: autenticar · Esc: hosts"
 }
 
 func fileDisplayText(s string) string {

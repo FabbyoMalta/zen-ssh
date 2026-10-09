@@ -2,6 +2,7 @@
 package filetransfer
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Entry struct {
@@ -21,10 +23,38 @@ func (e Entry) IsDir() bool   { return e.Kind == "d" }
 func (e Entry) CanCopy() bool { return e.Kind == "d" || e.Kind == "f" }
 
 type Client struct {
-	SSHPath string
-	Options []string
-	Target  string
+	SSHPath    string
+	Options    []string
+	Target     string
+	controlDir string
 }
+
+// Multiplex keeps authentication alive while background listings use the same
+// connection. A private short path also stays within Unix socket length limits.
+func (c Client) Multiplex() (Client, error) {
+	dir, err := os.MkdirTemp("", "zenssh-ssh-")
+	if err != nil {
+		return c, err
+	}
+	c.controlDir = dir
+	c.Options = append([]string{"-o", "ControlMaster=auto", "-o", "ControlPersist=60", "-o", "ControlPath=" + filepath.Join(dir, "socket")}, c.Options...)
+	return c, nil
+}
+
+func (c Client) Close() {
+	if c.controlDir == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	args := append([]string{"-o", "BatchMode=yes"}, c.Options...)
+	args = append(args, "-O", "exit", "--", c.Target)
+	_ = exec.CommandContext(ctx, c.SSHPath, args...).Run()
+	_ = os.RemoveAll(c.controlDir)
+}
+
+const listingStart = "\x00ZENSSH-LIST-V1\x00"
+const listingEnd = "\x00ZENSSH-LIST-END\x00"
 
 // New reuses the fully prepared connection, including imported SSH aliases.
 func New(ssh *exec.Cmd) Client {
@@ -51,7 +81,13 @@ func SCPPath(s string) string {
 func ListingScript(dir string) string {
 	// NUL framing preserves spaces, tabs and newlines in filenames. GNU find
 	// lists links as links; the browser does not follow them implicitly.
-	return "cd -- " + Quote(dir) + " && printf '%s\\0' \"$(pwd -P)\" && find . -mindepth 1 -maxdepth 1 -printf '%y\\0%s\\0%f\\0'"
+	return "cd -- " + Quote(dir) + " && printf '\\0ZENSSH-LIST-V1\\0%s\\0' \"$(pwd -P)\" && find . -mindepth 1 -maxdepth 1 -printf '%y\\0%s\\0%f\\0' && printf '\\0ZENSSH-LIST-END\\0'"
+}
+
+func (c Client) BackgroundListCommand(ctx context.Context, dir string) *exec.Cmd {
+	cmd := c.ListCommand(dir)
+	args := append([]string{"-o", "BatchMode=yes"}, cmd.Args[1:]...)
+	return exec.CommandContext(ctx, c.SSHPath, args...)
 }
 
 func (c Client) ListCommand(dir string) *exec.Cmd {
@@ -61,6 +97,14 @@ func (c Client) ListCommand(dir string) *exec.Cmd {
 }
 
 func ParseListing(data []byte) (string, []Entry, error) {
+	if start := strings.Index(string(data), listingStart); start >= 0 {
+		payload := string(data)[start+len(listingStart):]
+		end := strings.Index(payload, listingEnd)
+		if end < 0 {
+			return "", nil, fmt.Errorf("listagem remota incompleta")
+		}
+		data = []byte(payload[:end])
+	}
 	parts := strings.Split(string(data), "\x00")
 	if len(parts) < 2 || parts[len(parts)-1] != "" || !strings.HasPrefix(parts[0], "/") || (len(parts)-2)%3 != 0 {
 		return "", nil, fmt.Errorf("listagem remota invalida; requer shell Linux e GNU find, sem mensagens extras em stdout")

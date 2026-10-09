@@ -144,11 +144,14 @@ Selecione um servidor Linux e pressione `f`. O painel local começa na pasta em 
 | `c` | Copiar o item selecionado para a pasta aberta no outro painel |
 | `y` / `n` | Confirmar ou cancelar a transferência |
 | `r` | Atualizar o painel ativo |
+| `a` | Autenticar novamente a conexão do navegador |
 | `Esc` / `q` | Voltar à lista de hosts |
 
 Com o painel local ativo, `c` envia; com o remoto ativo, `c` baixa. Toda cópia pede confirmação: arquivos com o mesmo nome podem ser sobrescritos e pastas são copiadas recursivamente e mescladas no destino. Arquivos ocultos aparecem nas listagens. Links simbólicos e arquivos especiais não podem ser selecionados para cópia; SCP pode seguir links dentro de uma pasta copiada recursivamente. Nomes com quebras de linha são exibidos, mas não podem ser transferidos pelo protocolo SCP legado.
 
-As transferências usam `scp -O`, com o protocolo SCP, sem exigir um subsistema SFTP. O ZenSSH libera temporariamente o terminal para mostrar o progresso nativo do SCP e permitir digitar senhas, frases de chave e confirmar chaves de hosts. A interface retorna ao terminar, e os painéis são atualizados. Cada listagem/transferência abre uma conexão: use uma chave com `ssh-agent` ou multiplexação SSH para evitar repetir a autenticação. `Ctrl+C` durante o SCP interrompe a cópia; um arquivo parcial pode permanecer no destino.
+O navegador autentica uma vez ao abrir e mantém uma conexão SSH compartilhada. Entrar, sair ou atualizar pastas remotas executa a listagem em segundo plano, sem fechar a TUI; o painel mantém os arquivos atuais e indica que está carregando. Banners SSH são capturados, e mensagens de abertura/fechamento do shell não entram na listagem. Se a conexão cair ou a autenticação precisar ser renovada, pressione `a`. Ao fechar o navegador, a conexão compartilhada e seu socket temporário são removidos.
+
+As transferências usam `scp -O`, com o protocolo SCP, sem exigir um subsistema SFTP, e reutilizam a conexão do navegador. Durante a autenticação inicial, a reautenticação manual e a transferência, o ZenSSH libera temporariamente o terminal para permitir senhas, frases de chave, confirmação de chaves de hosts e o progresso nativo do SCP. A interface retorna ao terminar, e os painéis são atualizados. `Ctrl+C` durante o SCP interrompe a cópia; um arquivo parcial pode permanecer no destino.
 
 ### Gravação de sessões SSH
 

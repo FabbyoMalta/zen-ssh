@@ -144,6 +144,7 @@ type Model struct {
 	handoffTermType string
 	sessionLog      string
 	files           filesState
+	fileRequest     uint64
 	keys            keyMap
 	help            help.Model
 	viewport        viewport.Model
@@ -213,6 +214,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode != modeFiles {
 			return m, nil
 		}
+		if msg.remote {
+			if msg.request != m.fileRequest {
+				return m, nil
+			}
+			m.files.loading = false
+			m.files.cancel = nil
+		}
 		if msg.err != nil {
 			m.status = "Falha ao listar pasta: " + msg.err.Error()
 			m.statusStyle = m.theme.Danger
@@ -244,7 +252,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err == nil {
 			m.files.local = filePane{dir: dir, entries: entries}
 		}
-		return m, m.listRemote(m.files.remote.dir)
+		cmd := m.listRemote(m.files.remote.dir)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height

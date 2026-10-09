@@ -1,6 +1,7 @@
 package filetransfer
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,6 +69,22 @@ func TestParseListingRejectsMalformedOutput(t *testing.T) {
 	}
 	if _, entries, err := ParseListing([]byte("/tmp\x00")); err != nil || len(entries) != 0 {
 		t.Fatal("empty directory rejected")
+	}
+}
+
+func TestListingFramesIgnoreBannersAndRequireCompletion(t *testing.T) {
+	data := "banner before\n" + listingStart + "/tmp\x00f\x003\x00file\x00" + listingEnd + "logout banner\n"
+	dir, entries, err := ParseListing([]byte(data))
+	if err != nil || dir != "/tmp" || len(entries) != 1 {
+		t.Fatalf("framed listing: %s %#v %v", dir, entries, err)
+	}
+	if _, _, err := ParseListing([]byte(listingStart + "/tmp\x00")); err == nil {
+		t.Fatal("truncated listing accepted")
+	}
+	client := New(exec.Command("ssh", "-o", "BatchMode=no", "server"))
+	cmd := client.BackgroundListCommand(context.Background(), "/tmp")
+	if !slices.Equal(cmd.Args[1:3], []string{"-o", "BatchMode=yes"}) || cmd.Stdin != nil || cmd.Stderr != nil {
+		t.Fatal("background listing can prompt or write to terminal")
 	}
 }
 

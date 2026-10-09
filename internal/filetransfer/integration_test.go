@@ -2,6 +2,7 @@ package filetransfer
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -68,6 +69,20 @@ func TestSCPIntegration(t *testing.T) {
 		t.Fatalf("sshd did not start: %s", data)
 	}
 	client := New(exec.Command("ssh", "-i", key, "-p", fmt.Sprint(port), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", account.Username+"@127.0.0.1"))
+	client, err = client.Multiplex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	initial := client.ListCommand(root)
+	if data, err := initial.Output(); err != nil {
+		t.Fatalf("initial connection: %v %s", err, data)
+	}
+	// Without the private key, subsequent copies and listings can only succeed
+	// if they reuse the authenticated master connection.
+	if err := os.Rename(key, key+".away"); err != nil {
+		t.Fatal(err)
+	}
 	local, remote, downloads := filepath.Join(root, "local"), filepath.Join(root, "remote ' files"), filepath.Join(root, "downloads")
 	for _, dir := range []string{local, remote, downloads} {
 		if err := os.Mkdir(dir, 0700); err != nil {
@@ -117,7 +132,7 @@ func TestSCPIntegration(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(downloads, filepath.Base(folder), "child", ".hidden")); err != nil || string(data) != "nested" {
 		t.Fatalf("recursive payload: %s %v", data, err)
 	}
-	listing := client.ListCommand(remote)
+	listing := client.BackgroundListCommand(context.Background(), remote)
 	data, err := listing.Output()
 	if err != nil {
 		t.Fatalf("listing: %v", err)
@@ -132,5 +147,9 @@ func TestSCPIntegration(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(logFile.Name()); strings.Contains(string(data), "fatal") {
 		t.Fatalf("sshd error: %s", data)
+	}
+	client.Close()
+	if _, err := os.Stat(client.controlDir); !os.IsNotExist(err) {
+		t.Fatal("SSH control directory not cleaned up")
 	}
 }

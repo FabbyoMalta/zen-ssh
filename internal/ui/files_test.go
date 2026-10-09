@@ -2,6 +2,8 @@ package ui
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -41,6 +43,50 @@ func TestFileBrowserRequiresExplicitConfirmationAndPreservesPanels(t *testing.T)
 	m = updated.(Model)
 	if m.mode != modeList || m.files.local.dir != "" {
 		t.Fatal("browser not closed")
+	}
+}
+
+func TestRemoteNavigationRunsInBackgroundAndCapturesBanners(t *testing.T) {
+	ssh := filepath.Join(t.TempDir(), "ssh")
+	script := "#!/bin/sh\nprintf 'login banner\\n'\nprintf 'ssh banner\\n' >&2\nprintf '\\0ZENSSH-LIST-V1\\0/remote/child\\0f\\0003\\0file\\0\\0ZENSSH-LIST-END\\0'\n"
+	if err := os.WriteFile(ssh, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{mode: modeFiles, theme: style.New(), files: filesState{remoteActive: true, client: filetransfer.Client{SSHPath: ssh, Target: "server"}, remote: filePane{dir: "/remote", cursor: 1, entries: []filetransfer.Entry{{Name: "child", Kind: "d"}}}}}
+	updated, cmd := m.updateFiles(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !m.files.loading || m.files.remote.dir != "/remote" {
+		t.Fatal("navigation did not preserve the visible directory while loading")
+	}
+	msg, ok := cmd().(filesListedMsg)
+	if !ok {
+		t.Fatal("navigation suspended the terminal instead of returning a background listing")
+	}
+	if msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+	if m.files.loading || m.files.remote.dir != "/remote/child" || len(m.files.remote.entries) != 1 {
+		t.Fatalf("panel not updated: %#v", m.files.remote)
+	}
+}
+
+func TestRemoteNavigationIgnoresOldResponsesAndBlocksDuplicateRequests(t *testing.T) {
+	m := Model{mode: modeFiles, theme: style.New(), fileRequest: 3, files: filesState{loading: true, remoteActive: true, remote: filePane{dir: "/current"}}}
+	updated, cmd := m.updateFiles(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil || !updated.(Model).files.loading {
+		t.Fatal("duplicate remote navigation started")
+	}
+	updated, _ = m.Update(filesListedMsg{remote: true, request: 2, dir: "/old"})
+	m = updated.(Model)
+	if m.files.remote.dir != "/current" || !m.files.loading {
+		t.Fatal("old response replaced current panel")
+	}
+	updated, _ = m.Update(filesListedMsg{remote: true, request: 3, err: errors.New("authentication failed")})
+	m = updated.(Model)
+	if m.files.loading || m.files.remote.dir != "/current" || !strings.Contains(m.status, "authentication failed") {
+		t.Fatal("failed request lost current directory or remained loading")
 	}
 }
 
