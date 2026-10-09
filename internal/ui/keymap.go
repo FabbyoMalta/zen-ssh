@@ -7,6 +7,7 @@ import (
 type keyMap struct {
 	Recent                                           key.Binding
 	Record                                           key.Binding
+	Files                                            key.Binding
 	Connect, Search, Add, Help, Quit                 key.Binding
 	Up, Down, Import, Edit, Delete                   key.Binding
 	Diagnose, ToggleMode, Restore                    key.Binding
@@ -20,6 +21,7 @@ func newKeyMap() keyMap {
 		Recent:         key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "recentes/todos")),
 		Connect:        key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "conectar")),
 		Record:         key.NewBinding(key.WithKeys("L"), key.WithHelp("shift+l", "conectar e gravar")),
+		Files:          key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "arquivos/SCP")),
 		Search:         key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "buscar")),
 		Add:            key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "adicionar")),
 		Help:           key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "ajuda")),
@@ -49,12 +51,12 @@ func (k keyMap) SelectionHelp() []key.Binding {
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Connect, k.Record, k.Recent, k.SelectionMode, k.NextGroup, k.Search, k.Help}
+	return []key.Binding{k.Connect, k.Record, k.Files, k.Recent, k.SelectionMode, k.NextGroup, k.Search, k.Help}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Recent, k.Connect, k.Record, k.Search, k.SelectionMode},
+		{k.Up, k.Down, k.Recent, k.Connect, k.Record, k.Files, k.Search, k.SelectionMode},
 		{k.Select, k.PreviousGroup, k.NextGroup, k.BulkGroup, k.ClearSelection},
 		{k.Add, k.Edit, k.Delete, k.Import},
 		{k.ValidateKey, k.GenerateKey, k.PushKey},

@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"zenssh/internal/config"
+	"zenssh/internal/filetransfer"
 	"zenssh/internal/recording"
 	"zenssh/internal/sshcfg"
 	"zenssh/internal/style"
@@ -38,6 +39,7 @@ const (
 	modeConfirmRestore
 	modeHelp
 	modeBulkGroup
+	modeFiles
 )
 
 type operation int
@@ -141,6 +143,7 @@ type Model struct {
 	handoffCmd      *exec.Cmd
 	handoffTermType string
 	sessionLog      string
+	files           filesState
 	keys            keyMap
 	help            help.Model
 	viewport        viewport.Model
@@ -206,6 +209,42 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case filesListedMsg:
+		if m.mode != modeFiles {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.status = "Falha ao listar pasta: " + msg.err.Error()
+			m.statusStyle = m.theme.Danger
+			return m, nil
+		}
+		pane := &m.files.local
+		if msg.remote {
+			pane = &m.files.remote
+		}
+		cursor := 0
+		if pane.dir == msg.dir {
+			cursor = minInt(pane.cursor, len(msg.entries))
+		}
+		*pane = filePane{dir: msg.dir, entries: msg.entries, cursor: cursor}
+		m.files.confirm = false
+		return m, nil
+	case fileCopiedMsg:
+		if m.mode != modeFiles {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.status = fmt.Sprintf("Falha na transferencia SCP: %v. O destino pode conter uma copia parcial; veja o terminal.", msg.err)
+			m.statusStyle = m.theme.Danger
+		} else {
+			m.status = "Transferencia SCP concluida."
+			m.statusStyle = m.theme.Success
+		}
+		dir, entries, err := filetransfer.ListLocal(m.files.local.dir)
+		if err == nil {
+			m.files.local = filePane{dir: dir, entries: entries}
+		}
+		return m, m.listRemote(m.files.remote.dir)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -365,6 +404,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		switch m.mode {
+		case modeFiles:
+			return m.updateFiles(msg)
 		case modeList:
 			return m.updateList(msg)
 		case modeForm:
@@ -400,6 +441,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "f":
+		return m.openFiles()
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "?":
@@ -938,6 +981,8 @@ func (m Model) View() string {
 	body := ""
 
 	switch m.mode {
+	case modeFiles:
+		body = m.renderFiles()
 	case modeList:
 		body = m.renderList()
 	case modeForm:
@@ -1167,6 +1212,9 @@ func (m Model) renderBusy() string {
 }
 
 func (m Model) renderFooter() string {
+	if m.mode == modeFiles {
+		return m.statusStyle.Render(fitText(m.status, m.layout.contentWidth))
+	}
 	helpView := m.help.View(m.keys)
 	if m.selectionMode {
 		helpView = m.help.ShortHelpView(m.keys.SelectionHelp())

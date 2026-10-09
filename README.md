@@ -118,6 +118,7 @@ Include ~/.config/zenssh/ssh_config
 | `↓` / `j` | Selecionar o próximo host |
 | `Enter` | Conectar ao host selecionado |
 | `Shift+L` | Conectar ao host selecionado e gravar a sessão localmente |
+| `f` | Abrir o navegador de arquivos local/remoto e transferir com SCP |
 | `/` | Buscar hosts |
 | `r` | Alternar entre todos os hosts e os recentes |
 | `a` | Adicionar um host |
@@ -128,6 +129,26 @@ Include ~/.config/zenssh/ssh_config
 | `q` | Encerrar o ZenSSH |
 
 Ao encerrar a sessão SSH, o ZenSSH volta automaticamente à interface, inclusive quando a conexão falha. Pressione `r` para listar os hosts já acessados, do mais recente ao mais antigo, e use as setas e `Enter` para reconectar. A lista de recentes respeita a busca e o grupo ativos; pressione `r` novamente para voltar à lista completa.
+
+### Navegador de arquivos e SCP
+
+Selecione um servidor Linux e pressione `f`. O painel local começa na pasta em que você abriu o ZenSSH; o remoto começa na pasta inicial do usuário SSH. A conexão reutiliza usuário, porta, chaves, opções de compatibilidade, `ProxyJump` e aliases importados. Requer `ssh` e `scp` locais, e shell Linux, GNU `find` e `scp` no servidor.
+
+| Tecla | Ação |
+| --- | --- |
+| `Tab` | Alternar entre o painel local e o remoto |
+| `↑` / `↓` ou `k` / `j` | Selecionar arquivo ou pasta |
+| `Enter` | Abrir a pasta selecionada |
+| `Backspace` | Subir para a pasta anterior |
+| `/` | Informar um caminho absoluto ou relativo à pasta atual |
+| `c` | Copiar o item selecionado para a pasta aberta no outro painel |
+| `y` / `n` | Confirmar ou cancelar a transferência |
+| `r` | Atualizar o painel ativo |
+| `Esc` / `q` | Voltar à lista de hosts |
+
+Com o painel local ativo, `c` envia; com o remoto ativo, `c` baixa. Toda cópia pede confirmação: arquivos com o mesmo nome podem ser sobrescritos e pastas são copiadas recursivamente e mescladas no destino. Arquivos ocultos aparecem nas listagens. Links simbólicos e arquivos especiais não podem ser selecionados para cópia; SCP pode seguir links dentro de uma pasta copiada recursivamente. Nomes com quebras de linha são exibidos, mas não podem ser transferidos pelo protocolo SCP legado.
+
+As transferências usam `scp -O`, com o protocolo SCP, sem exigir um subsistema SFTP. O ZenSSH libera temporariamente o terminal para mostrar o progresso nativo do SCP e permitir digitar senhas, frases de chave e confirmar chaves de hosts. A interface retorna ao terminar, e os painéis são atualizados. Cada listagem/transferência abre uma conexão: use uma chave com `ssh-agent` ou multiplexação SSH para evitar repetir a autenticação. `Ctrl+C` durante o SCP interrompe a cópia; um arquivo parcial pode permanecer no destino.
 
 ### Gravação de sessões SSH
 
